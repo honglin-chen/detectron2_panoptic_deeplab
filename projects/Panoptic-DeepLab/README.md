@@ -152,6 +152,13 @@ Note:
 
 If you use Panoptic-DeepLab, please use the following BibTeX entry.
 
+
+
+## Evaluation on custom datasets
+
+```
+CUDA_VISIBLE_DEVICES=0 python train_net.py --config-file configs/COCO-PanopticSegmentation/panoptic_deeplab_R_52_os16_mg124_poly_200k_bs64_crop_640_640_coco_dsconv.yaml --eval-only MODEL.WEIGHTS ./models/model_final_5e6da2.pkl DATASETS.TEST '("dsr/val",)' MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED True MODEL.PANOPTIC_DEEPLAB.SIZE_DIVISIBILITY 0
+```
 *   CVPR 2020 paper:
 
 ```

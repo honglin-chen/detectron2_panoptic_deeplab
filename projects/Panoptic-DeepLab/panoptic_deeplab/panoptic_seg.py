@@ -21,7 +21,9 @@ from detectron2.projects.deeplab.loss import DeepLabCE
 from detectron2.structures import BitMasks, ImageList, Instances
 from detectron2.utils.registry import Registry
 
-from .post_processing import get_panoptic_segmentation
+from .post_processing import get_panoptic_segmentation, get_instance_segmentation
+import pdb
+import matplotlib.pyplot as plt
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -144,6 +146,45 @@ class PanopticDeepLab(nn.Module):
 
         if self.training:
             return losses
+
+        # visualize segments
+        for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
+                sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
+        ):
+            height = 240
+            width = 240
+            sem_seg = sem_seg_postprocess(sem_seg_result, image_size, height, width)
+            center_heatmap = sem_seg_postprocess(center_result, image_size, height, width)
+            offsets = sem_seg_postprocess(offset_result, image_size, height, width)
+            thing_seg = torch.ones_like(center_heatmap)
+            thing_ids = []
+            instance, center = get_instance_segmentation(
+                sem_seg,
+                center_heatmap,
+                offsets,
+                thing_seg,
+                thing_ids,
+                threshold=self.threshold,
+                nms_kernel=self.nms_kernel,
+                top_k=self.top_k,
+            )
+
+            plt.figure(figsize=(16, 4))
+            fontsize = 19
+            plt.subplot(1, 4, 1)
+            plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0))
+            plt.title('Image', fontsize=fontsize)
+            plt.subplot(1, 4, 2)
+            plt.imshow(center_heatmap[0].cpu())
+            plt.title('Center heatmap', fontsize=fontsize)
+            plt.subplot(1, 4, 3)
+            plt.imshow(offsets[0].cpu())
+            plt.title('Offsets', fontsize=fontsize)
+            plt.subplot(1, 4, 4)
+            plt.imshow(instance[0].cpu())
+            plt.title('Instance segments', fontsize=fontsize)
+            plt.show()
+            plt.close()
 
         if self.benchmark_network_speed:
             return []

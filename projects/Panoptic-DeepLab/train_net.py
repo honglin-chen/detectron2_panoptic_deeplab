@@ -25,6 +25,7 @@ from detectron2.evaluation import (
 from detectron2.projects.deeplab import build_lr_scheduler
 from detectron2.projects.panoptic_deeplab import (
     PanopticDeeplabDatasetMapper,
+    DSRDatasetMapper,
     add_panoptic_deeplab_config,
 )
 from detectron2.solver import get_default_optimizer_params
@@ -94,7 +95,10 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def build_train_loader(cls, cfg):
-        mapper = PanopticDeeplabDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg))
+        if 'dsr' in cfg.DATASETS.TRAIN[0]:
+            mapper = DSRDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
+        else:
+            mapper = PanopticDeeplabDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg))
         return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod

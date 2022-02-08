@@ -28,7 +28,7 @@ from .coco import load_sem_seg, register_coco_instances
 from .coco_panoptic import register_coco_panoptic, register_coco_panoptic_separated
 from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
-
+from .dsr import register_dsr
 # ==== Predefined datasets and splits for COCO ==========
 
 _PREDEFINED_SPLITS_COCO = {}
@@ -210,6 +210,19 @@ def register_all_cityscapes(root):
             **meta,
         )
 
+# ==== Predefined splits for DSR ===========
+#
+DSR_DIR = "/data2/honglinc/dsr_dataset/real_test_dataset"
+_RAW_DSR_SPLITS = {
+    "dsr/train": ("*_[0-8].hdf5"),  #(ROBOT_NAMES),
+    "dsr/val": ("*_[0-3].hdf5"),
+    "dsr/eval": ("*_[0-3].hdf5"),
+}
+
+def register_all_dsr(root):
+    for dataset_name, file_pattern in _RAW_DSR_SPLITS.items():
+        register_dsr(root=root, dataset_name=dataset_name, file_pattern=file_pattern)
+
 
 # ==== Predefined splits for PASCAL VOC ===========
 def register_all_pascal_voc(root):
@@ -257,3 +270,4 @@ if __name__.endswith(".builtin"):
     register_all_cityscapes_panoptic(_root)
     register_all_pascal_voc(_root)
     register_all_ade20k(_root)
+    register_all_dsr(_root)

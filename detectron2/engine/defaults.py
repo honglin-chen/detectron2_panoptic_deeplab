@@ -35,6 +35,11 @@ from detectron2.evaluation import (
     print_csv_format,
     verify_results,
 )
+
+from detectron2.projects.panoptic_deeplab import (
+    PanopticDeeplabDatasetMapper,
+    DSRDatasetMapper,
+)
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
 from detectron2.utils import comm
@@ -599,7 +604,13 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
 
         results = OrderedDict()
         for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
-            data_loader = cls.build_test_loader(cfg, dataset_name)
+
+            if 'dsr' in dataset_name:
+                mapper = DSRDatasetMapper(cfg, training=False)
+                data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+            else:
+                data_loader = cls.build_test_loader(cfg, dataset_name)
+
             # When evaluators are passed in as arguments,
             # implicitly assume that evaluators can be created before data_loader.
             if evaluators is not None:

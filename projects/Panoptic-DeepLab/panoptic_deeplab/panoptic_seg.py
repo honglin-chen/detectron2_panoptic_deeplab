@@ -26,7 +26,9 @@ import pdb
 import matplotlib.pyplot as plt
 import numpy as np
 from .raft_evaluate import EvalRAFT, viz_flow_seg
-from .utils import visualize_center_offset, compute_center_offset
+from .utils import visualize_center_offset, compute_center_offset, measure_static_segmentation_metric
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -71,9 +73,10 @@ class PanopticDeepLab(nn.Module):
 
         if self.raft_supervision:
             assert self.raft_threshold is not None
-            print('Loading raft model from ./RAFT/models/raft-sintel.pth')
+            print('Loading raft model from ./RAFT/models/raft-sintel.pth with threshold', self.raft_threshold)
             self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
 
+        self.metric = []
     @property
     def device(self):
         return self.pixel_mean.device
@@ -155,10 +158,9 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
-        # # # visualize center and offsets
-        # if not self.training:
-        #     for i in range(len(batched_inputs)):
-        #         visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
+        # # # # visualize center and offsets
+        # for i in range(len(batched_inputs)):
+        #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
             features, center_targets, center_weights, offset_targets, offset_weights
@@ -169,8 +171,12 @@ class PanopticDeepLab(nn.Module):
         if self.training:
             return losses
 
-        # visualize segments (testing time)
-        self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
+        # # visualize segments (testing time)
+        # self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
+        # pdb.set_trace()
+
+        # self.measure_segments(center_weights, batched_inputs)
+        # print('Metric:', len(self.metric), np.nanmean(self.metric))
 
         if self.benchmark_network_speed:
             return []
@@ -262,7 +268,7 @@ class PanopticDeepLab(nn.Module):
         flow_mag = (raft_flow ** 2).sum(1) ** 0.5
         motion_segments = flow_mag > self.raft_threshold
 
-        # Visualize flow outputs
+        # # Visualize flow outputs
         # for i in range(raft_flow.shape[0]):
         #     viz_flow_seg(x1[i][None], raft_flow.detach()[i][None], motion_segments[i][None, None], flow_mag[i][None].detach())
 
@@ -271,6 +277,14 @@ class PanopticDeepLab(nn.Module):
 
         return center_targets, offset_targets, center_weights, offset_weights
 
+    def measure_segments(self, segments, batched_inputs):
+        data_dict = {'segments': segments.squeeze(1).int()}
+        segment_metric, segment_vis = measure_static_segmentation_metric(data_dict, batched_inputs, self.input_size,
+                                                                         segment_key=['segments'],
+                                                                         moving_only=True,
+                                                                         eval_full_res=True)
+
+        self.metric.append(segment_metric['metric_segments_mean_ious'])
 
     def visualize_instance_segments(self, center_results, offset_results, batched_inputs, images):
         for center_result, offset_result, input_per_image, image_size in zip(
@@ -295,18 +309,33 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
 
-            plt.figure(figsize=(16, 4))
+            fig = plt.figure(figsize=(20, 4))
             fontsize = 19
-            plt.subplot(1, 4, 1)
+            plt.subplot(1, 5, 1)
             plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0))
             plt.title('Image', fontsize=fontsize)
-            plt.subplot(1, 4, 2)
-            plt.imshow(center_heatmap[0].cpu())
+            plt.subplot(1, 5, 2)
+            im = plt.imshow(center_heatmap[0].cpu())
             plt.title('Center heatmap', fontsize=fontsize)
-            plt.subplot(1, 4, 3)
-            plt.imshow(offsets[0].cpu())
-            plt.title('Offsets', fontsize=fontsize)
-            plt.subplot(1, 4, 4)
+            divider = make_axes_locatable(plt.gca())
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            fig.colorbar(im, cax=cax, orientation='vertical')
+
+            plt.subplot(1, 5, 3)
+            im = plt.imshow(offsets[0].cpu())
+            plt.title('Offsets-x', fontsize=fontsize)
+            divider = make_axes_locatable(plt.gca())
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            fig.colorbar(im, cax=cax, orientation='vertical')
+
+            plt.subplot(1, 5, 4)
+            im = plt.imshow(offsets[1].cpu())
+            plt.title('Offsets-y', fontsize=fontsize)
+            divider = make_axes_locatable(plt.gca())
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            fig.colorbar(im, cax=cax, orientation='vertical')
+
+            plt.subplot(1, 5, 5)
             plt.imshow(instance[0].cpu())
             plt.title('Instance segments', fontsize=fontsize)
             plt.show()

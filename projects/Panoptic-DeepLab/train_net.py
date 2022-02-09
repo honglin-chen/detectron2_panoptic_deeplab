@@ -98,7 +98,7 @@ class Trainer(DefaultTrainer):
         if 'dsr' in cfg.DATASETS.TRAIN[0]:
             mapper = DSRDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
         else:
-            mapper = PanopticDeeplabDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg))
+            mapper = PanopticDeeplabDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
         return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod

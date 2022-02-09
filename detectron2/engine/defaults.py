@@ -607,6 +607,9 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
             if 'dsr' in dataset_name:
                 mapper = DSRDatasetMapper(cfg, training=False)
                 data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+            elif 'playroom' in dataset_name:
+                mapper = PanopticDeeplabDatasetMapper(cfg, training=False)
+                data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
             else:
                 data_loader = cls.build_test_loader(cfg, dataset_name)
 

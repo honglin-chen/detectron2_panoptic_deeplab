@@ -29,6 +29,7 @@ from .coco_panoptic import register_coco_panoptic, register_coco_panoptic_separa
 from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
 from .dsr import register_dsr
+from .tdw_playroom import register_tdw_playroom_instances
 # ==== Predefined datasets and splits for COCO ==========
 
 _PREDEFINED_SPLITS_COCO = {}
@@ -222,6 +223,25 @@ def register_all_dsr(root):
     for dataset_name, file_pattern in _RAW_DSR_SPLITS.items():
         register_dsr(root=root, dataset_name=dataset_name, file_pattern=file_pattern)
 
+# ==== Predefined splits for TDW ===========
+_RAW_PLAYROOM_LARGE_V1_SPLITS = {
+    "playroom_large_v3_images/train": ([i for i in range(32)], "*[0-8]"),
+    "playroom_large_v3_images/eval": ([4], "0*[0-4]"),
+    "playroom_large_v3_images/val": ([i for i in range(4)], "*9"),
+    "playroom_large_v3_images/vis_val": ([4], "00*1"),
+    "playroom_large_v3_images/single_train": ([i for i in range(32)], "*"),
+    "playroom_large_v3_images/single_val": ([4], "0011"),
+    "playroom_large_v3_images/sup_train": ([i for i in range(32)], "*[0-8]"),
+    "playroom_large_v3_images/sup_val": ([i for i in range(4)], "*9"),
+}
+
+
+def register_all_playroom_large_v1(root):
+    for folder_name, (split, file_pattern) in _RAW_PLAYROOM_LARGE_V1_SPLITS.items():
+        register_tdw_playroom_instances(root=root,
+                                        folder_name=folder_name,
+                                        split=split,
+                                        file_pattern=file_pattern)
 
 # ==== Predefined splits for PASCAL VOC ===========
 def register_all_pascal_voc(root):
@@ -270,3 +290,4 @@ if __name__.endswith(".builtin"):
     register_all_pascal_voc(_root)
     register_all_ade20k(_root)
     register_all_dsr(_root)
+    register_all_playroom_large_v1(_root)

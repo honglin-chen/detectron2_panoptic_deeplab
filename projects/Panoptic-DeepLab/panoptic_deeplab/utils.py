@@ -18,11 +18,11 @@ def visualize_center_offset(image, center_targets, offset_targets, center_weight
 
     plt.subplot(1, 6, 3)
     plt.imshow(offset_targets[0].cpu())
-    plt.title('Offset-x targets', fontsize=fontsize)
+    plt.title('Offset-y targets', fontsize=fontsize)
 
     plt.subplot(1, 6, 4)
     plt.imshow(offset_targets[1].cpu())
-    plt.title('Offset-y targets', fontsize=fontsize)
+    plt.title('Offset-x targets', fontsize=fontsize)
 
     plt.subplot(1, 6, 5)
     plt.imshow(center_weights[0].cpu())
@@ -55,6 +55,7 @@ def compute_center_offset(mask, sigma=8.0):
 
     center_targets = []
     offset_targets = []
+    center_y0, center_y1, center_x0, center_x1, mask_index = None, None, None, None, None
     for i in range(B):
         center = torch.zeros([H, W]).to(mask.device)
         offset = torch.zeros([2, H, W]).to(mask.device)
@@ -98,7 +99,7 @@ def compute_center_offset(mask, sigma=8.0):
     center_targets = torch.cat(center_targets, dim=0)
     offset_targets = torch.cat(offset_targets, dim=0)
 
-    return center_targets, offset_targets
+    return center_targets, offset_targets, (center_y0, center_y1, center_x0, center_x1, mask_index)
 
 
 def _object_id_hash(objects, val=256, dtype=torch.long):

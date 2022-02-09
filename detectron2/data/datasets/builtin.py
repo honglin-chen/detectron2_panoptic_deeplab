@@ -229,7 +229,7 @@ _RAW_PLAYROOM_LARGE_V1_SPLITS = {
     "playroom_large_v3_images/eval": ([4], "0*[0-4]"),
     "playroom_large_v3_images/val": ([i for i in range(4)], "*9"),
     "playroom_large_v3_images/vis_val": ([4], "00*1"),
-    "playroom_large_v3_images/single_train": ([i for i in range(32)], "*"),
+    "playroom_large_v3_images/single_train": ([4], "0011"),
     "playroom_large_v3_images/single_val": ([4], "0011"),
     "playroom_large_v3_images/sup_train": ([i for i in range(32)], "*[0-8]"),
     "playroom_large_v3_images/sup_val": ([i for i in range(4)], "*9"),

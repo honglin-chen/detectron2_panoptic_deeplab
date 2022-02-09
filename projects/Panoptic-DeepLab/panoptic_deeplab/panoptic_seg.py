@@ -70,6 +70,7 @@ class PanopticDeepLab(nn.Module):
         self.raft_supervision =  cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_SUPERVISION
         self.raft_threshold = cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_THRESHOLD
         self.input_size = cfg.INPUT.CROP.SIZE
+        self.allobj_supervision = True
 
         if self.raft_supervision:
             assert self.raft_threshold is not None
@@ -136,7 +137,11 @@ class PanopticDeepLab(nn.Module):
         losses.update(sem_seg_losses)
         '''
 
-        if self.raft_supervision:
+        if self.allobj_supervision:
+            print('Warning: using all object supervision')
+            outputs = self.create_allobj_supervision(batched_inputs)
+            center_targets, offset_targets, center_weights, offset_weights = outputs
+        elif self.raft_supervision:
             outputs = self.create_raft_supervision(batched_inputs)
             center_targets, offset_targets, center_weights, offset_weights = outputs
         elif "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
@@ -158,7 +163,7 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
-        # # # # visualize center and offsets
+        # # # # # visualize center and offsets
         # for i in range(len(batched_inputs)):
         #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
@@ -172,7 +177,7 @@ class PanopticDeepLab(nn.Module):
             return losses
 
         # # visualize segments (testing time)
-        # self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
+        self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
         # pdb.set_trace()
 
         # self.measure_segments(center_weights, batched_inputs)
@@ -251,6 +256,39 @@ class PanopticDeepLab(nn.Module):
 
         return processed_results
 
+    def create_allobj_supervision(self, batched_inputs):
+        B = len(batched_inputs)
+        H = W = 512
+        center_weights = torch.zeros([B, 1, H, W]).cuda()
+        offset_weights = torch.zeros([B, 1, H, W]).cuda()
+        center = torch.zeros([B, 1, H, W]).cuda()
+        offset = torch.zeros([B, 2, H, W]).cuda()
+
+        for batch_idx, inp in enumerate(batched_inputs):
+            per_segment_id = inp['per_segment_id']
+            segment_id_map = inp['segment_id_map']
+            assert per_segment_id.shape[0] == 1
+
+            for i in range(per_segment_id.shape[-1]):
+                idx = per_segment_id[0, i].item()
+                mask = (segment_id_map == idx).unsqueeze(0).cuda()
+
+                _center, _offset, out = compute_center_offset(mask)
+                center_y0, center_y1, center_x0, center_x1, mask_index = out
+
+                if center_y0 is not None:
+                    center[batch_idx, 0, center_y0:center_y1, center_x0:center_x1] = _center[0, 0, center_y0:center_y1, center_x0:center_x1]
+
+                    offset[batch_idx, 0][mask_index] = _offset[0, 0][mask_index]
+                    offset[batch_idx, 1][mask_index] = _offset[0, 1][mask_index]
+
+                    center_weights[batch_idx, 0][mask_index] = 1.
+                    offset_weights[batch_idx, 0][mask_index] = 1.
+                else:
+                    assert mask.sum() == 0, mask.sum()
+
+        return center, offset, center_weights, offset_weights
+
     def create_raft_supervision(self, batched_inputs):
         x1 = [x["image"].to(self.device) for x in batched_inputs]
         x2 = [x["image_1"].to(self.device) for x in batched_inputs]
@@ -323,14 +361,14 @@ class PanopticDeepLab(nn.Module):
 
             plt.subplot(1, 5, 3)
             im = plt.imshow(offsets[0].cpu())
-            plt.title('Offsets-x', fontsize=fontsize)
+            plt.title('Offsets-y', fontsize=fontsize)
             divider = make_axes_locatable(plt.gca())
             cax = divider.append_axes('right', size='5%', pad=0.05)
             fig.colorbar(im, cax=cax, orientation='vertical')
 
             plt.subplot(1, 5, 4)
             im = plt.imshow(offsets[1].cpu())
-            plt.title('Offsets-y', fontsize=fontsize)
+            plt.title('Offsets-x', fontsize=fontsize)
             divider = make_axes_locatable(plt.gca())
             cax = divider.append_axes('right', size='5%', pad=0.05)
             fig.colorbar(im, cax=cax, orientation='vertical')

@@ -155,9 +155,10 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
-        # # visualize center and offsets
-        # for i in range(len(batched_inputs)):
-        #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
+        # # # visualize center and offsets
+        # if not self.training:
+        #     for i in range(len(batched_inputs)):
+        #         visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
             features, center_targets, center_weights, offset_targets, offset_weights
@@ -168,7 +169,7 @@ class PanopticDeepLab(nn.Module):
         if self.training:
             return losses
 
-        # visualize segments
+        # visualize segments (testing time)
         self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
 
         if self.benchmark_network_speed:
@@ -276,7 +277,8 @@ class PanopticDeepLab(nn.Module):
                 center_results, offset_results, batched_inputs, images.image_sizes
         ):
             height, width = self.input_size
-
+            assert height == center_result.shape[-2] and width == center_result.shape[-1], (self.input_size, center_result.shape)
+            print('Visualize instance segment size: ', self.input_size)
             center_heatmap = sem_seg_postprocess(center_result, image_size, height, width)
             offsets = sem_seg_postprocess(offset_result, image_size, height, width)
             sem_seg = torch.zeros_like(center_heatmap)

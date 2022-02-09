@@ -80,7 +80,7 @@ class DSRDatasetMapper:
 
         self.returns = ['action', 'color_heightmap', 'color_image', 'tsdf', 'mask_3d', 'scene_flow_3d']
         self.data_per_seq = self.tot_seq_len // self.seq_len
-        self.center_crop_fn = transforms.CenterCrop(size=224)
+        self.center_crop_fn = transforms.CenterCrop(size=240)
         # self.resize_fn = transforms.Resize(size=512)
 
     @classmethod

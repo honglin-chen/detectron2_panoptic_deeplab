@@ -57,3 +57,5 @@ def add_panoptic_deeplab_config(cfg):
     cfg.MODEL.PANOPTIC_DEEPLAB.SIZE_DIVISIBILITY = -1
     # Only evaluates network speed (ignores post-processing).
     cfg.MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED = False
+    cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_SUPERVISION = False
+    cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_THRESHOLD = None

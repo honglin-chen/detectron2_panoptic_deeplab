@@ -25,14 +25,15 @@ def load_dsr(root, folder_name, file_pattern, dataset_name):
 
     file_list = glob.glob(os.path.join(root, folder_name, file_pattern))
 
+    # perform train, eval, val split
     new_file_list = []
     for file in file_list:
-        idx = int(file.split('/')[-1].split('_')[0])
+        idx = int(file.split('/')[-1].split('_')[0])  # file index
         if dataset_name == 'dsr/train':
             if idx >= 5:
                 new_file_list.append(file)
         elif dataset_name == 'dsr/eval':
-            if idx > 5 and idx < 10:
+            if 5 < idx < 10:
                 new_file_list.append(file)
         elif dataset_name == 'dsr/val':
             if idx < 5:
@@ -44,7 +45,6 @@ def load_dsr(root, folder_name, file_pattern, dataset_name):
     file_list = new_file_list
 
     dataset_dicts += [{'file_name': filename, 'root': root, 'width': 240, 'height': 240,} for filename in file_list]
-
 
     return dataset_dicts
 
@@ -69,8 +69,6 @@ def register_dsr(root, dataset_name, file_pattern):
     assert isinstance(root, str), root
 
     folder_name = 'dsr_dataset/real_test_data'
-
-    training = 'train' in dataset_name
     DatasetCatalog.register(dataset_name,
                             lambda: load_dsr(root, folder_name=folder_name, file_pattern=file_pattern, dataset_name=dataset_name))
 
@@ -87,16 +85,4 @@ def register_dsr(root, dataset_name, file_pattern):
 
 
 if __name__ == "__main__":
-    """
-    Test the TDW playroom dataset loader.
-
-    Usage:
-        python -m detectron2.data.datasets.tdw_playroom
-    """
-    # from detectron2.utils.logger import setup_logger
-    # from detectron2.utils.visualizer import Visualizer
-    # import detectron2.data.datasets  # noqa # add pre-defined metadata
-    # import sys
-
-    folder_name = '/mnt/fs5/dbear/tdw_datasets/playroom_large_v1/model_split_0'
-    register_tdw_playroom_instances(folder_name)
+    pass

@@ -79,6 +79,13 @@ def launch(
             daemon=False,
         )
     else:
+        # main_func(*args)
+        port = _find_free_port()
+        dist_url = f"tcp://127.0.0.1:{port}"
+        dist.init_process_group(
+            backend="NCCL", init_method=dist_url, world_size=1, rank=0
+        )
+
         main_func(*args)
 
 

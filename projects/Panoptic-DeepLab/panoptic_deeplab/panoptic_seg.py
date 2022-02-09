@@ -24,6 +24,9 @@ from detectron2.utils.registry import Registry
 from .post_processing import get_panoptic_segmentation, get_instance_segmentation
 import pdb
 import matplotlib.pyplot as plt
+import numpy as np
+from .raft_evaluate import EvalRAFT, viz_flow_seg
+from .utils import visualize_center_offset, compute_center_offset
 
 __all__ = ["PanopticDeepLab", "INS_EMBED_BRANCHES_REGISTRY", "build_ins_embed_branch"]
 
@@ -61,6 +64,15 @@ class PanopticDeepLab(nn.Module):
         )
         self.size_divisibility = cfg.MODEL.PANOPTIC_DEEPLAB.SIZE_DIVISIBILITY
         self.benchmark_network_speed = cfg.MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED
+
+        self.raft_supervision =  cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_SUPERVISION
+        self.raft_threshold = cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_THRESHOLD
+        self.input_size = cfg.INPUT.CROP.SIZE
+
+        if self.raft_supervision:
+            assert self.raft_threshold is not None
+            print('Loading raft model from ./RAFT/models/raft-sintel.pth')
+            self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
 
     @property
     def device(self):
@@ -101,6 +113,7 @@ class PanopticDeepLab(nn.Module):
         features = self.backbone(images.tensor)
 
         losses = {}
+        '''
         if "sem_seg" in batched_inputs[0]:
             targets = [x["sem_seg"].to(self.device) for x in batched_inputs]
             targets = ImageList.from_tensors(
@@ -118,8 +131,12 @@ class PanopticDeepLab(nn.Module):
             weights = None
         sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
         losses.update(sem_seg_losses)
+        '''
 
-        if "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
+        if self.raft_supervision:
+            outputs = self.create_raft_supervision(batched_inputs)
+            center_targets, offset_targets, center_weights, offset_weights = outputs
+        elif "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
             center_targets = [x["center"].to(self.device) for x in batched_inputs]
             center_targets = ImageList.from_tensors(
                 center_targets, size_divisibility
@@ -138,6 +155,10 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
+        # # visualize center and offsets
+        # for i in range(len(batched_inputs)):
+        #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
+
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
             features, center_targets, center_weights, offset_targets, offset_weights
         )
@@ -148,43 +169,7 @@ class PanopticDeepLab(nn.Module):
             return losses
 
         # visualize segments
-        for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
-                sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
-        ):
-            height = 240
-            width = 240
-            sem_seg = sem_seg_postprocess(sem_seg_result, image_size, height, width)
-            center_heatmap = sem_seg_postprocess(center_result, image_size, height, width)
-            offsets = sem_seg_postprocess(offset_result, image_size, height, width)
-            thing_seg = torch.ones_like(center_heatmap)
-            thing_ids = []
-            instance, center = get_instance_segmentation(
-                sem_seg,
-                center_heatmap,
-                offsets,
-                thing_seg,
-                thing_ids,
-                threshold=self.threshold,
-                nms_kernel=self.nms_kernel,
-                top_k=self.top_k,
-            )
-
-            plt.figure(figsize=(16, 4))
-            fontsize = 19
-            plt.subplot(1, 4, 1)
-            plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0))
-            plt.title('Image', fontsize=fontsize)
-            plt.subplot(1, 4, 2)
-            plt.imshow(center_heatmap[0].cpu())
-            plt.title('Center heatmap', fontsize=fontsize)
-            plt.subplot(1, 4, 3)
-            plt.imshow(offsets[0].cpu())
-            plt.title('Offsets', fontsize=fontsize)
-            plt.subplot(1, 4, 4)
-            plt.imshow(instance[0].cpu())
-            plt.title('Instance segments', fontsize=fontsize)
-            plt.show()
-            plt.close()
+        self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
 
         if self.benchmark_network_speed:
             return []
@@ -259,6 +244,71 @@ class PanopticDeepLab(nn.Module):
 
         return processed_results
 
+    def create_raft_supervision(self, batched_inputs):
+        x1 = [x["image"].to(self.device) for x in batched_inputs]
+        x2 = [x["image_1"].to(self.device) for x in batched_inputs]
+
+        size_divisibility = (
+            self.size_divisibility
+            if self.size_divisibility > 0
+            else self.backbone.size_divisibility
+        )
+
+        x1 = ImageList.from_tensors(x1, size_divisibility).tensor
+        x2 = ImageList.from_tensors(x2, size_divisibility).tensor
+
+        raft_flow = self.raft_model(x1, x2)
+        flow_mag = (raft_flow ** 2).sum(1) ** 0.5
+        motion_segments = flow_mag > self.raft_threshold
+
+        # Visualize flow outputs
+        # for i in range(raft_flow.shape[0]):
+        #     viz_flow_seg(x1[i][None], raft_flow.detach()[i][None], motion_segments[i][None, None], flow_mag[i][None].detach())
+
+        center_weights = offset_weights = motion_segments.unsqueeze(1)
+        center_targets, offset_targets = compute_center_offset(motion_segments)
+
+        return center_targets, offset_targets, center_weights, offset_weights
+
+
+    def visualize_instance_segments(self, center_results, offset_results, batched_inputs, images):
+        for center_result, offset_result, input_per_image, image_size in zip(
+                center_results, offset_results, batched_inputs, images.image_sizes
+        ):
+            height, width = self.input_size
+
+            center_heatmap = sem_seg_postprocess(center_result, image_size, height, width)
+            offsets = sem_seg_postprocess(offset_result, image_size, height, width)
+            sem_seg = torch.zeros_like(center_heatmap)
+            thing_seg = torch.ones_like(center_heatmap)
+            thing_ids = []
+            instance, center = get_instance_segmentation(
+                sem_seg,
+                center_heatmap,
+                offsets,
+                thing_seg,
+                thing_ids,
+                threshold=self.threshold,
+                nms_kernel=self.nms_kernel,
+                top_k=self.top_k,
+            )
+
+            plt.figure(figsize=(16, 4))
+            fontsize = 19
+            plt.subplot(1, 4, 1)
+            plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0))
+            plt.title('Image', fontsize=fontsize)
+            plt.subplot(1, 4, 2)
+            plt.imshow(center_heatmap[0].cpu())
+            plt.title('Center heatmap', fontsize=fontsize)
+            plt.subplot(1, 4, 3)
+            plt.imshow(offsets[0].cpu())
+            plt.title('Offsets', fontsize=fontsize)
+            plt.subplot(1, 4, 4)
+            plt.imshow(instance[0].cpu())
+            plt.title('Instance segments', fontsize=fontsize)
+            plt.show()
+            plt.close()
 
 @SEM_SEG_HEADS_REGISTRY.register()
 class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):

@@ -211,10 +211,9 @@ def register_all_cityscapes(root):
         )
 
 # ==== Predefined splits for DSR ===========
-#
 DSR_DIR = "/data2/honglinc/dsr_dataset/real_test_dataset"
 _RAW_DSR_SPLITS = {
-    "dsr/train": ("*_[0-8].hdf5"),  #(ROBOT_NAMES),
+    "dsr/train": ("*_[0-8].hdf5"),
     "dsr/val": ("*_[0-3].hdf5"),
     "dsr/eval": ("*_[0-3].hdf5"),
 }

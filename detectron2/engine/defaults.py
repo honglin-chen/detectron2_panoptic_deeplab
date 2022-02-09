@@ -76,7 +76,7 @@ def create_ddp_model(model, *, fp16_compression=False, **kwargs):
         return model
     if "device_ids" not in kwargs:
         kwargs["device_ids"] = [comm.get_local_rank()]
-    ddp = DistributedDataParallel(model, **kwargs)
+    ddp = DistributedDataParallel(model, find_unused_parameters=True, **kwargs)
     if fp16_compression:
         from torch.distributed.algorithms.ddp_comm_hooks import default as comm_hooks
 
@@ -604,7 +604,6 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
 
         results = OrderedDict()
         for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
-
             if 'dsr' in dataset_name:
                 mapper = DSRDatasetMapper(cfg, training=False)
                 data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)

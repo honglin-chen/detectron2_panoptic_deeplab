@@ -371,6 +371,7 @@ class PanopticDeeplabDatasetMapper:
 
                 dataset_dict['per_segment_id'] = per_segment_id_tensor.unsqueeze(0)
 
+            '''
             if self.view_generator is not None and self.training:
                 views = self.view_generator(dataset_dict)
                 dataset_dict.update(views)
@@ -403,8 +404,10 @@ class PanopticDeeplabDatasetMapper:
             # print('offset_weights', torch.unique(dataset_dict['offset_weights']))
             # visualize_views(dataset_dict, plot_keys=['image', 'objects', 'center', 'center_weights', 'offset', 'offset_weights'])
             # visualize_views(dataset_dict, plot_keys=['image', 'objects', 'gt_moving', 'delta_image', 'delta_image_floodfill', 'flow', 'flow_thresh'])
+            '''
 
         else:
+            raise ValueError
             # Load image.
             image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
             utils.check_image_size(dataset_dict, image)

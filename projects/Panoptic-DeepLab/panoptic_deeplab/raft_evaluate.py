@@ -21,7 +21,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 class EvalRAFT:
     def __init__(self, ckpt_path='./RAFT/models/raft-things.pth'):
         model = torch.nn.DataParallel(RAFT(args))
-        model.load_state_dict(torch.load(ckpt_path))
+        model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
         model = model.module
         model.eval()
         self.model = model.cuda()

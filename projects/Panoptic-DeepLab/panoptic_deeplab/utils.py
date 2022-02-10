@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
@@ -18,11 +19,11 @@ def visualize_center_offset(image, center_targets, offset_targets, center_weight
 
     plt.subplot(1, 6, 3)
     plt.imshow(offset_targets[0].cpu())
-    plt.title('Offset-x targets', fontsize=fontsize)
+    plt.title('Offset-y targets', fontsize=fontsize)
 
     plt.subplot(1, 6, 4)
     plt.imshow(offset_targets[1].cpu())
-    plt.title('Offset-y targets', fontsize=fontsize)
+    plt.title('Offset-x targets', fontsize=fontsize)
 
     plt.subplot(1, 6, 5)
     plt.imshow(center_weights[0].cpu())
@@ -38,7 +39,10 @@ def visualize_center_offset(image, center_targets, offset_targets, center_weight
 
 def compute_center_offset(mask, sigma=8.0):
 
-    B, H, W = mask.shape
+    B, _, H, W = mask.shape
+
+    assert mask.shape[1] == 1, mask.shape
+    mask = mask.squeeze(1)
 
     y_coord, x_coord = np.meshgrid(
         np.arange(H, dtype=np.float32), np.arange(W, dtype=np.float32), indexing="ij"
@@ -355,3 +359,14 @@ def measure_static_segmentation_metric(out, inputs, size, segment_key,
         segment_out[key] = metric.seg_out
 
     return segment_metric, segment_out
+
+
+
+class BCELoss(nn.Module):
+    def __init__(self):
+        super(BCELoss, self).__init__()
+        self.criterion = torch.nn.BCEWithLogitsLoss()
+
+    def forward(self, inputs, targets, weights):
+        assert weights is None, "weighted version is not implemented yet"
+        return self.criterion(inputs, targets)

@@ -45,7 +45,7 @@ from detectron2.solver import build_lr_scheduler, build_optimizer
 from detectron2.utils import comm
 from detectron2.utils.collect_env import collect_env_info
 from detectron2.utils.env import seed_all_rng
-from detectron2.utils.events import CommonMetricPrinter, JSONWriter, TensorboardXWriter
+from detectron2.utils.events import CommonMetricPrinter, JSONWriter, TensorboardXWriter, WandbWriter
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
 
@@ -145,6 +145,7 @@ For python-based LazyConfig, use "path.key=value".
         default=None,
         nargs=argparse.REMAINDER,
     )
+    parser.add_argument("--wandb", action="store_true", help="whether to use wandb")
     return parser
 
 
@@ -232,7 +233,7 @@ def default_setup(cfg, args):
         )
 
 
-def default_writers(output_dir: str, max_iter: Optional[int] = None):
+def default_writers(output_dir: str, max_iter: Optional[int] = None, wandb : Optional[bool] = True):
     """
     Build a list of :class:`EventWriter` to be used.
     It now consists of a :class:`CommonMetricPrinter`,
@@ -246,12 +247,15 @@ def default_writers(output_dir: str, max_iter: Optional[int] = None):
         list[EventWriter]: a list of :class:`EventWriter` objects.
     """
     PathManager.mkdirs(output_dir)
-    return [
+    out = [
         # It may not always print what you want to see, since it prints "common" metrics only.
         CommonMetricPrinter(max_iter),
         JSONWriter(os.path.join(output_dir, "metrics.json")),
         TensorboardXWriter(output_dir),
     ]
+    if wandb:
+        out.append(WandbWriter(output_dir))
+    return out
 
 
 class DefaultPredictor:
@@ -366,7 +370,7 @@ class DefaultTrainer(TrainerBase):
         cfg (CfgNode):
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, wandb=True):
         """
         Args:
             cfg (CfgNode):
@@ -397,7 +401,7 @@ class DefaultTrainer(TrainerBase):
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
         self.cfg = cfg
-
+        self.wandb = wandb
         self.register_hooks(self.build_hooks())
 
     def resume_or_load(self, resume=True):
@@ -455,7 +459,7 @@ class DefaultTrainer(TrainerBase):
             ret.append(hooks.PeriodicCheckpointer(self.checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD))
 
         def test_and_save_results():
-            self._last_eval_results = self.test(self.cfg, self.model)
+            self._last_eval_results = self.test(self.cfg, self.model, iter=self.iter)
             return self._last_eval_results
 
         # Do evaluation after checkpointer, because then if it fails,
@@ -477,7 +481,7 @@ class DefaultTrainer(TrainerBase):
         Returns:
             list[EventWriter]: a list of :class:`EventWriter` objects.
         """
-        return default_writers(self.cfg.OUTPUT_DIR, self.max_iter)
+        return default_writers(self.cfg.OUTPUT_DIR, self.max_iter, self.wandb)
 
     def train(self):
         """
@@ -579,7 +583,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         )
 
     @classmethod
-    def test(cls, cfg, model, evaluators=None):
+    def test(cls, cfg, model, evaluators=None, iter=None):
         """
         Evaluate the given model. The given model is expected to already contain
         weights to evaluate.
@@ -627,7 +631,7 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     )
                     results[dataset_name] = {}
                     continue
-            results_i = inference_on_dataset(model, data_loader, evaluator)
+            results_i = inference_on_dataset(model, data_loader, evaluator, iter)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(
@@ -636,7 +640,8 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
                     results_i
                 )
                 logger.info("Evaluation results for {} in csv format:".format(dataset_name))
-                print_csv_format(results_i)
+
+        print_csv_format(results)
 
         if len(results) == 1:
             results = list(results.values())[0]

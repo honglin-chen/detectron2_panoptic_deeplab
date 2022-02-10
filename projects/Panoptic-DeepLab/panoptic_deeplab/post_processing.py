@@ -103,10 +103,10 @@ def get_instance_segmentation(
         center_heatmap, threshold=threshold, nms_kernel=nms_kernel, top_k=top_k
     )
     if center_points.size(0) == 0:
-        return torch.zeros_like(sem_seg), center_points.unsqueeze(0)
+        return torch.zeros_like(sem_seg), torch.zeros_like(sem_seg), center_points.unsqueeze(0)
     ins_seg = group_pixels(center_points, offsets)
-    return thing_seg * ins_seg, center_points.unsqueeze(0)
 
+    return ins_seg, thing_seg * ins_seg, center_points.unsqueeze(0)
 
 def merge_semantic_and_instance(
     sem_seg, ins_seg, semantic_thing_seg, label_divisor, thing_ids, stuff_area, void_label

@@ -23,10 +23,11 @@ from detectron2.utils.registry import Registry
 
 from .post_processing import get_panoptic_segmentation, get_instance_segmentation
 import pdb
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 from .raft_evaluate import EvalRAFT, viz_flow_seg
-from .utils import visualize_center_offset, compute_center_offset, measure_static_segmentation_metric
+from .utils import visualize_center_offset, compute_center_offset, measure_static_segmentation_metric, BCELoss
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
@@ -70,18 +71,27 @@ class PanopticDeepLab(nn.Module):
         self.raft_supervision =  cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_SUPERVISION
         self.raft_threshold = cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_THRESHOLD
         self.input_size = cfg.INPUT.CROP.SIZE
+        self.predict_thing_mask = cfg.MODEL.PANOPTIC_DEEPLAB.PREDICT_THING_MASK
 
         if self.raft_supervision:
             assert self.raft_threshold is not None
             print('Loading raft model from ./RAFT/models/raft-sintel.pth with threshold', self.raft_threshold)
             self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
 
-        self.metric = []
+        if self.predict_thing_mask:
+            assert cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES == 1
+            self.sem_seg_head.loss = BCELoss()
+
+        self.vis_saved_path = os.path.join('./validation_vis', cfg.OUTPUT_DIR.split('/')[-1])
+        self.dataset_name = cfg.DATASETS.TEST[0]
+        if not os.path.exists(self.vis_saved_path):
+            os.makedirs(self.vis_saved_path)
+
     @property
     def device(self):
         return self.pixel_mean.device
 
-    def forward(self, batched_inputs):
+    def forward(self, batched_inputs, iter):
         """
         Args:
             batched_inputs: a list, batched outputs of :class:`DatasetMapper`.
@@ -116,29 +126,17 @@ class PanopticDeepLab(nn.Module):
         features = self.backbone(images.tensor)
 
         losses = {}
-        '''
-        if "sem_seg" in batched_inputs[0]:
-            targets = [x["sem_seg"].to(self.device) for x in batched_inputs]
-            targets = ImageList.from_tensors(
-                targets, size_divisibility, self.sem_seg_head.ignore_value
-            ).tensor
-            if "sem_seg_weights" in batched_inputs[0]:
-                # The default D2 DatasetMapper may not contain "sem_seg_weights"
-                # Avoid error in testing when default DatasetMapper is used.
-                weights = [x["sem_seg_weights"].to(self.device) for x in batched_inputs]
-                weights = ImageList.from_tensors(weights, size_divisibility).tensor
-            else:
-                weights = None
-        else:
-            targets = None
-            weights = None
-        sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
-        losses.update(sem_seg_losses)
-        '''
+
+        # assertion checks
+        if 'playroom' in self.dataset_name or 'dsr' in self.dataset_name:
+            assert self.raft_supervision
+            assert self.predict_thing_mask, "Training with PDL should have predict_thing_mask=True"
+            assert "sem_seg" not in batched_inputs[0]
+            assert self.size_divisibility == 0
 
         if self.raft_supervision:
             outputs = self.create_raft_supervision(batched_inputs)
-            center_targets, offset_targets, center_weights, offset_weights = outputs
+            center_targets, offset_targets, center_weights, offset_weights, motion_segments = outputs
         elif "center" in batched_inputs[0] and "offset" in batched_inputs[0]:
             center_targets = [x["center"].to(self.device) for x in batched_inputs]
             center_targets = ImageList.from_tensors(
@@ -158,7 +156,28 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
-        # # # # visualize center and offsets
+        if "sem_seg" in batched_inputs[0]:
+            targets = [x["sem_seg"].to(self.device) for x in batched_inputs]
+            targets = ImageList.from_tensors(
+                targets, size_divisibility, self.sem_seg_head.ignore_value
+            ).tensor
+            if "sem_seg_weights" in batched_inputs[0]:
+                # The default D2 DatasetMapper may not contain "sem_seg_weights"
+                # Avoid error in testing when default DatasetMapper is used.
+                weights = [x["sem_seg_weights"].to(self.device) for x in batched_inputs]
+                weights = ImageList.from_tensors(weights, size_divisibility).tensor
+            else:
+                weights = None
+        elif self.predict_thing_mask:
+            targets = motion_segments.float()
+            weights = None
+        else:
+            targets = None
+            weights = None
+        sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
+        losses.update(sem_seg_losses)
+
+        # # visualize center and offsets supervision signals for training
         # for i in range(len(batched_inputs)):
         #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
@@ -170,13 +189,10 @@ class PanopticDeepLab(nn.Module):
 
         if self.training:
             return losses
-
-        # # visualize segments (testing time)
-        # self.visualize_instance_segments(center_results, offset_results, batched_inputs, images)
-        # pdb.set_trace()
-
-        # self.measure_segments(center_weights, batched_inputs)
-        # print('Metric:', len(self.metric), np.nanmean(self.metric))
+        else:
+            out = self.postprocessing(sem_seg_results, center_results, offset_results, batched_inputs, images, motion_segments, iter)
+            losses.update(out)
+            return losses
 
         if self.benchmark_network_speed:
             return []
@@ -267,38 +283,89 @@ class PanopticDeepLab(nn.Module):
         raft_flow = self.raft_model(x1, x2)
         flow_mag = (raft_flow ** 2).sum(1) ** 0.5
         motion_segments = flow_mag > self.raft_threshold
+        motion_segments = motion_segments.unsqueeze(1)
 
         # # Visualize flow outputs
         # for i in range(raft_flow.shape[0]):
         #     viz_flow_seg(x1[i][None], raft_flow.detach()[i][None], motion_segments[i][None, None], flow_mag[i][None].detach())
 
-        center_weights = offset_weights = motion_segments.unsqueeze(1)
+        center_weights = offset_weights = motion_segments
         center_targets, offset_targets = compute_center_offset(motion_segments)
 
-        return center_targets, offset_targets, center_weights, offset_weights
+        return center_targets, offset_targets, center_weights, offset_weights, motion_segments
 
-    def measure_segments(self, segments, batched_inputs):
+    def postprocessing(self, sem_seg_results, center_results, offset_results, batched_inputs, images, motion_segments, iter):
+        # visualize results and compute metric
+        vis = True
+        if 'playroom' in self.dataset_name:
+            if int(batched_inputs[0]['file_name'].split('/')[-1].split('.hdf5')[0]) > 100:
+                vis = False
+
+        _, instance_seg = self.create_instance_segments(sem_seg_results, center_results, offset_results, batched_inputs,
+                                                     images, iter, vis)
+
+        if 'playroom' in self.dataset_name:
+            sup_metric, _ = self.measure_segments(motion_segments, batched_inputs, moving_only=True)
+            sinobj_metric, sinobj_vis = self.measure_segments(instance_seg, batched_inputs, moving_only=True)
+            allobj_metric, allobj_vis = self.measure_segments(instance_seg, batched_inputs, moving_only=False)
+
+            file_name = int(batched_inputs[0]['file_name'].split('/')[-1].split('.hdf5')[0])
+            if file_name < 100:
+                sup_miou = sup_metric['metric_segments_mean_ious']
+                self.visualize_segments(sinobj_vis['segments'], motion_segments, batched_inputs, iter,
+                                        miou=sup_miou, prefix='sinobj')
+                self.visualize_segments(allobj_vis['segments'], motion_segments, batched_inputs, iter,
+                                        miou=sup_miou, prefix='allobj')
+
+            return {
+                'metric_sup_miou': sup_metric['metric_segments_mean_ious'],
+                'metric_sinobj_miou': sinobj_metric['metric_segments_mean_ious'],
+                'metric_allobj_miou': allobj_metric['metric_segments_mean_ious'],
+            }
+        else:
+            return {}
+
+
+    def measure_segments(self, segments, batched_inputs, moving_only):
         data_dict = {'segments': segments.squeeze(1).int()}
-        segment_metric, segment_vis = measure_static_segmentation_metric(data_dict, batched_inputs, self.input_size,
-                                                                         segment_key=['segments'],
-                                                                         moving_only=True,
-                                                                         eval_full_res=True)
+        return  measure_static_segmentation_metric(data_dict, batched_inputs, self.input_size,
+                                                 segment_key=['segments'],
+                                                 moving_only=moving_only,
+                                                 eval_full_res=True)
 
-        self.metric.append(segment_metric['metric_segments_mean_ious'])
 
-    def visualize_instance_segments(self, center_results, offset_results, batched_inputs, images):
-        for center_result, offset_result, input_per_image, image_size in zip(
-                center_results, offset_results, batched_inputs, images.image_sizes
+    def create_instance_segments(self, sem_seg_results, center_results, offset_results, batched_inputs, images, iter, vis):
+        assert len(batched_inputs) == 1
+        for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
+                sem_seg_results, center_results, offset_results, batched_inputs, images.image_sizes
         ):
             height, width = self.input_size
             assert height == center_result.shape[-2] and width == center_result.shape[-1], (self.input_size, center_result.shape)
-            print('Visualize instance segment size: ', self.input_size)
+
             center_heatmap = sem_seg_postprocess(center_result, image_size, height, width)
             offsets = sem_seg_postprocess(offset_result, image_size, height, width)
-            sem_seg = torch.zeros_like(center_heatmap)
-            thing_seg = torch.ones_like(center_heatmap)
-            thing_ids = []
-            instance, center = get_instance_segmentation(
+
+            if sem_seg_result is None:
+                sem_seg = torch.zeros_like(center_heatmap)
+                thing_seg = torch.ones_like(sem_seg)
+                thing_ids = []
+            elif self.predict_thing_mask:
+                sem_seg = sem_seg_postprocess(sem_seg_results, image_size, height, width)
+                thing_seg = sem_seg.sigmoid() > 0.1
+                thing_ids = []
+            else:
+                sem_seg = sem_seg_postprocess(sem_seg_results, image_size, height, width)
+                sem_seg = sem_seg.argmax(dim=0, keepdim=True)
+                thing_ids = self.meta.thing_dataset_id_to_contiguous_id.values()
+
+                # print('using coco thing ids')
+                # thing_ids = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]
+
+                thing_seg = torch.zeros_like(sem_seg)
+                for thing_class in list(thing_ids):
+                    thing_seg[sem_seg == thing_class] = 1
+
+            raw_instance, thing_instance, center = get_instance_segmentation(
                 sem_seg,
                 center_heatmap,
                 offsets,
@@ -309,37 +376,79 @@ class PanopticDeepLab(nn.Module):
                 top_k=self.top_k,
             )
 
-            fig = plt.figure(figsize=(20, 4))
-            fontsize = 19
-            plt.subplot(1, 5, 1)
-            plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0))
-            plt.title('Image', fontsize=fontsize)
-            plt.subplot(1, 5, 2)
-            im = plt.imshow(center_heatmap[0].cpu())
-            plt.title('Center heatmap', fontsize=fontsize)
-            divider = make_axes_locatable(plt.gca())
-            cax = divider.append_axes('right', size='5%', pad=0.05)
-            fig.colorbar(im, cax=cax, orientation='vertical')
+            if vis:
+                fig = plt.figure(figsize=(24, 4))
+                fontsize = 19
 
-            plt.subplot(1, 5, 3)
-            im = plt.imshow(offsets[0].cpu())
-            plt.title('Offsets-x', fontsize=fontsize)
-            divider = make_axes_locatable(plt.gca())
-            cax = divider.append_axes('right', size='5%', pad=0.05)
-            fig.colorbar(im, cax=cax, orientation='vertical')
+                vis_items = {
+                    'Image': batched_inputs[0]['image'].permute(1, 2, 0).cpu(),
+                    'Center': center_heatmap[0].cpu(),
+                    'Offset-Y': offsets[0].cpu(),
+                    'Offset-X': offsets[1].cpu(),
+                    'Objectness': thing_seg[0].cpu(),
+                    'Raw instance': raw_instance[0].cpu(),
+                    'Object instance': thing_instance[0].cpu()
+                }
 
-            plt.subplot(1, 5, 4)
-            im = plt.imshow(offsets[1].cpu())
-            plt.title('Offsets-y', fontsize=fontsize)
-            divider = make_axes_locatable(plt.gca())
-            cax = divider.append_axes('right', size='5%', pad=0.05)
-            fig.colorbar(im, cax=cax, orientation='vertical')
+                num_items = len(vis_items.keys())
+                for i, (k, v) in enumerate(vis_items.items()):
+                    plt.subplot(1, num_items, i+1)
 
-            plt.subplot(1, 5, 5)
-            plt.imshow(instance[0].cpu())
-            plt.title('Instance segments', fontsize=fontsize)
-            plt.show()
-            plt.close()
+                    plt.imshow(v)
+                    plt.title(k, fontsize=fontsize)
+                    plt.axis('off')
+
+                file_name = batched_inputs[0]['file_name'].split('/')[-1].split('.hdf5')[0]
+                save_path = os.path.join(self.vis_saved_path, 'step_%s_%s.png' % ('eval' if iter is None else str(iter), file_name))
+                # print('Save visualization to ', save_path)
+                plt.savefig(save_path)
+                # plt.show()
+                plt.close()
+
+        return raw_instance, thing_instance
+
+    def visualize_segments(self, segment_vis, labels, batched_inputs,  iter, miou, prefix=''):
+        matched_cc_preds, matched_gts, cc_ious = segment_vis
+
+        H = W = self.input_size
+
+        fsz = 19
+        num_plots = 2+len(matched_cc_preds[0])*2
+        fig = plt.figure(figsize=(num_plots * 4, 5))
+        gs = fig.add_gridspec(1, num_plots)
+        ax1 = fig.add_subplot(gs[0])
+
+        image = batched_inputs[0]['frames'][0]
+        plt.imshow(image.permute([1, 2, 0]).cpu())
+        plt.axis('off')
+        ax1.set_title('Image', fontsize=fsz)
+
+        ax = fig.add_subplot(gs[1])
+
+        if labels is None:
+            labels = torch.zeros(1, 1, H, W)
+        plt.imshow(labels[0, 0].cpu())
+        plt.title('Supervision \n (IoU: %.2f)' % miou, fontsize=fsz)
+        plt.axis('off')
+
+        for i, (cc_pred, gt, cc_iou) in enumerate(zip(matched_cc_preds[0], matched_gts[0], cc_ious[0])):
+            ax = fig.add_subplot(gs[2 + i])
+            ax.imshow(cc_pred)
+            ax.set_title('Pred (IoU: %.2f)' % cc_iou, fontsize=fsz)
+            plt.axis('off')
+
+            ax = fig.add_subplot(gs[2 + len(matched_cc_preds[0]) + i])
+            ax.imshow(gt)
+            plt.axis('off')
+            ax.set_title('GT %d' % i, fontsize=fsz)
+
+        file_name = batched_inputs[0]['file_name'].split('/')[-1].split('.hdf5')[0]
+        save_path = os.path.join(self.vis_saved_path, 'step_%s_%s_%s.png' % ('eval' if iter is None else str(iter), file_name, prefix))
+        # print('Save fig to ', save_path)
+        plt.savefig(save_path, bbox_inches='tight')
+
+        # plt.show()
+        plt.close()
 
 @SEM_SEG_HEADS_REGISTRY.register()
 class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
@@ -452,7 +561,7 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         """
         y = self.layers(features)
         if self.training:
-            return None, self.losses(y, targets, weights)
+            return y, self.losses(y, targets, weights)
         else:
             y = F.interpolate(
                 y, scale_factor=self.common_stride, mode="bilinear", align_corners=False

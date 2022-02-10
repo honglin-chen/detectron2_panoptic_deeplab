@@ -27,6 +27,7 @@ from detectron2.projects.panoptic_deeplab import (
     PanopticDeeplabDatasetMapper,
     DSRDatasetMapper,
     add_panoptic_deeplab_config,
+    KPCompetitionEvaluator
 )
 from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
@@ -64,6 +65,8 @@ class Trainer(DefaultTrainer):
             return None
         if output_folder is None:
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
+        if 'playroom' in dataset_name or 'dsr' in dataset_name or 'robonet' in dataset_name:
+            return KPCompetitionEvaluator(dataset_name)
         evaluator_list = []
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
         if evaluator_type in ["cityscapes_panoptic_seg", "coco_panoptic_seg"]:
@@ -158,7 +161,7 @@ def main(args):
         res = Trainer.test(cfg, model)
         return res
 
-    trainer = Trainer(cfg)
+    trainer = Trainer(cfg, wandb=args.wandb)
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
 

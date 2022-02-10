@@ -101,7 +101,7 @@ class DatasetEvaluators(DatasetEvaluator):
 
 
 def inference_on_dataset(
-    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None]
+    model, data_loader, evaluator: Union[DatasetEvaluator, List[DatasetEvaluator], None], iter=None
 ):
     """
     Run model on the data_loader and evaluate the metrics with evaluator.
@@ -155,7 +155,7 @@ def inference_on_dataset(
                 total_eval_time = 0
 
             start_compute_time = time.perf_counter()
-            outputs = model(inputs)
+            outputs = model(inputs, iter)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time

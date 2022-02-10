@@ -544,6 +544,8 @@ class EvalHook(HookBase):
         # A barrier make them start the next iteration together.
         comm.synchronize()
 
+    def before_train(self):
+        self._do_eval()
     def after_step(self):
         next_iter = self.trainer.iter + 1
         if self._period > 0 and next_iter % self._period == 0:

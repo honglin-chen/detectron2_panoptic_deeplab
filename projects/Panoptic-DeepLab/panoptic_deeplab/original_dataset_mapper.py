@@ -32,6 +32,7 @@ class PanopticDeeplabDatasetMapper:
         augmentations: List[Union[T.Augmentation, T.Transform]],
         image_format: str,
         panoptic_target_generator: Callable,
+        training: bool
     ):
         """
         NOTE: this interface is experimental.

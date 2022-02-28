@@ -26,6 +26,7 @@ import pdb
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+# from .thingness_evaluate import load_model
 from .raft_evaluate import EvalRAFT, viz_flow_seg
 from .utils import visualize_center_offset, compute_center_offset, measure_static_segmentation_metric, BCELoss
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -69,6 +70,7 @@ class PanopticDeepLab(nn.Module):
         self.benchmark_network_speed = cfg.MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED
 
         self.raft_supervision =  cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_SUPERVISION
+        self.full_supervision = cfg.MODEL.PANOPTIC_DEEPLAB.FULL_SUPERVISION
         self.raft_threshold = cfg.MODEL.PANOPTIC_DEEPLAB.RAFT_THRESHOLD
         self.input_size = cfg.INPUT.CROP.SIZE
         self.predict_thing_mask = cfg.MODEL.PANOPTIC_DEEPLAB.PREDICT_THING_MASK
@@ -77,6 +79,9 @@ class PanopticDeepLab(nn.Module):
             assert self.raft_threshold is not None
             print('Loading raft model from ./RAFT/models/raft-sintel.pth with threshold', self.raft_threshold)
             self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
+            # self.raft_model = load_model('./RAFT/models/raft-sintel.pth', small=False, train=False, cuda=True, freeze_bn=True, gpus=[0])
+            # load_path = 'thingness-tdw-selfsup-bs2-small-20frames.pth'
+            # self.thingness_model = load_model(load_path, small=True, train=True, cuda=True, freeze_bn=False, gpus=[0])
 
         if self.predict_thing_mask:
             assert cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES == 1
@@ -129,7 +134,7 @@ class PanopticDeepLab(nn.Module):
 
         # assertion checks
         if 'playroom' in self.dataset_name or 'dsr' in self.dataset_name:
-            assert self.raft_supervision
+            # assert self.raft_supervision
             assert self.predict_thing_mask, "Training with PDL should have predict_thing_mask=True"
             assert "sem_seg" not in batched_inputs[0]
             assert self.size_divisibility == 0
@@ -156,6 +161,10 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
+        # # visualize center and offsets supervision signals for training
+        # for i in range(len(batched_inputs)):
+        #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
+
         if "sem_seg" in batched_inputs[0]:
             targets = [x["sem_seg"].to(self.device) for x in batched_inputs]
             targets = ImageList.from_tensors(
@@ -169,7 +178,17 @@ class PanopticDeepLab(nn.Module):
             else:
                 weights = None
         elif self.predict_thing_mask:
-            targets = motion_segments.float()
+            assert self.raft_supervision or self.full_supervision, (self.raft_supervision, self.full_supervision)
+            if self.raft_supervision:
+                targets = motion_segments.float()
+            elif self.full_supervision:
+                # object_segments = [x["object_segments"].to(self.device) for x in batched_inputs]
+                # object_segments = ImageList.from_tensors(object_segments, size_divisibility).tensor
+                # targets = (object_segments.unsqueeze(1) > 0).float()
+                targets = offset_weights.clone()
+                motion_segments = targets
+                assert torch.equal(targets, offset_weights), pdb.set_trace()
+
             weights = None
         else:
             targets = None
@@ -177,9 +196,6 @@ class PanopticDeepLab(nn.Module):
         sem_seg_results, sem_seg_losses = self.sem_seg_head(features, targets, weights)
         losses.update(sem_seg_losses)
 
-        # # visualize center and offsets supervision signals for training
-        # for i in range(len(batched_inputs)):
-        #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
         center_results, offset_results, center_losses, offset_losses = self.ins_embed_head(
             features, center_targets, center_weights, offset_targets, offset_weights
@@ -352,6 +368,19 @@ class PanopticDeepLab(nn.Module):
             elif self.predict_thing_mask:
                 sem_seg = sem_seg_postprocess(sem_seg_results, image_size, height, width)
                 thing_seg = sem_seg.sigmoid() > 0.1
+
+
+                # _, thing_logits = self.thingness_model(images.tensor, images.tensor, test_mode=True)
+                # thing_mask = thing_logits.sigmoid() > 0.05
+                #
+                # pdb.set_trace()
+                # plt.subplot(1, 2, 1)
+                # plt.imshow(batched_inputs[0]['image'].permute(1, 2, 0).cpu())
+                # plt.subplot(1, 2, 2)
+                # plt.imshow(thing_mask[0,0].cpu())
+                # plt.show()
+                # plt.close()
+
                 thing_ids = []
             else:
                 sem_seg = sem_seg_postprocess(sem_seg_results, image_size, height, width)

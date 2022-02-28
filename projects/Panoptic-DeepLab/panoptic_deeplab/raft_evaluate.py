@@ -5,7 +5,6 @@ import sys
 import cv2
 import os
 sys.path.append('./RAFT/core')
-sys.path.append('../Panoptic-DeepLab/RAFT/core')
 from raft import RAFT
 from utils import flow_viz
 from utils.utils import InputPadder

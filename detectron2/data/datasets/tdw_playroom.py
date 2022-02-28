@@ -40,9 +40,9 @@ def load_tdw_playroom(root, folder_name, split, file_pattern):
         # file_list = glob.glob(os.path.join('/data5/dbear/tdw_datasets/playroom_occlude1', '*.hdf5'))
         dataset_dicts += [{'file_name': filename, 'width': 512, 'height': 512, 'root': root} for filename in file_list]
 
-    if len(dataset_dicts) == 500:
-        dataset_dicts = dataset_dicts[0:496]
-        print('Warning: 496 images in the evaluation dataset')
+    # if len(dataset_dicts) == 500:
+    #     dataset_dicts = dataset_dicts[0:496]
+    #     print('Warning: 496 images in the evaluation dataset')
     return dataset_dicts
 
 

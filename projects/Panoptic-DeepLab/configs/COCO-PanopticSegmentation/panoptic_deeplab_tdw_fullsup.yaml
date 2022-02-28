@@ -22,9 +22,10 @@ MODEL:
     NMS_KERNEL: 41
     SIZE_DIVISIBILITY: 0
     USE_DEPTHWISE_SEPARABLE_CONV: True
-    RAFT_SUPERVISION: True
+    RAFT_SUPERVISION: False
     RAFT_THRESHOLD: 0.5
     PREDICT_THING_MASK: True
+    FULL_SUPERVISION: True
 DATASETS:
   TRAIN: ("playroom_large_v3_images/train",)
   TEST: ("playroom_large_v3_images/eval", "playroom_large_v3_images/val", )

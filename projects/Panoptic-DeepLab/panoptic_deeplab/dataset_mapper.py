@@ -354,6 +354,7 @@ class PanopticDeeplabDatasetMapper:
 
                 if isinstance(per_segment_id, dict):
                     obj_types = ['probe', 'target', 'distractor', 'occluder', 'zone', 'background', 'moving']
+                    zone_id = int(per_segment_id['zone'])
                     per_segment_id = [int(per_segment_id[k]) for k in obj_types if k in per_segment_id.keys()]
                 else:
                     per_segment_id = [int(i) for i in per_segment_id]
@@ -370,6 +371,28 @@ class PanopticDeeplabDatasetMapper:
                         (split_trial, per_segment_id_tensor[int(split_trial.split('/')[-1]) % 4], moving_id_tensor)
 
                 dataset_dict['per_segment_id'] = per_segment_id_tensor.unsqueeze(0)
+
+
+                # Compute targets for PDL
+                object_segments = dataset_dict['segment_id_map'].clone()  # raw segmentation id
+                object_segments[object_segments == zone_id] = 0
+                dataset_dict['object_segments'] = object_segments
+                segments_info = []
+                for i in range(6):
+                    segments_info.append({
+                        'id': per_segment_id[i] if i < 4 else 0,  # objects
+                        'category_id': 1 if i < 4 else 0,         # objects (if changed, change thing_ids beflow)
+                        'iscrowd': 0                              # zone
+                    })
+
+                self.panoptic_target_generator.thing_ids = [1]
+                targets = self.panoptic_target_generator(object_segments, segments_info)
+                for key in ['center', 'center_weights', 'offset', 'offset_weights']:
+                    dataset_dict[key] = targets[key]
+
+                # visualize_views(dataset_dict,
+                #                 plot_keys=['image', 'object_segments', 'center', 'center_weights', 'offset',
+                #                            'offset_weights'])
 
             '''
             if self.view_generator is not None and self.training:

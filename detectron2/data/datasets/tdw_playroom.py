@@ -27,7 +27,10 @@ def load_tdw_playroom(root, folder_name, split, file_pattern):
         if folder_name in ['playroom_large_v1', 'playroom_large_v1_main']:
             file_list = glob.glob(os.path.join(root, folder_name, 'model_split_%s' % str(i), file_pattern))
         elif folder_name in ['playroom_large_v1_main_images', 'playroom_large_v3_images']:
-            file_list = glob.glob(os.path.join(root, folder_name, 'images', 'model_split_%s' % str(i), file_pattern))
+            if 'playroom' in i or 'cylinder' in i or 'occlude' in i:
+                file_list = glob.glob(os.path.join(root, folder_name, 'images', str(i), file_pattern))
+            else:
+                file_list = glob.glob(os.path.join(root, folder_name, 'images', 'model_split_%s' % str(i), file_pattern))
         elif folder_name == 'playroom_large_v1_main_images_mat':
             file_list = glob.glob(os.path.join(root, 'playroom_large_v1_main_images', 'images', 'material_split_%s' % str(i), file_pattern))
         elif 'playroom_large_v1_main_images_mat_' in folder_name:
@@ -87,7 +90,7 @@ def register_tdw_playroom_instances(root, folder_name, split, file_pattern='*.hd
     elif '/vis_val' in folder_name:
         folder_name = folder_name.split('/vis_val')[0]
     else:
-        raise ValueError
+        folder_name = folder_name.split('/')[0]
     DatasetCatalog.register(original_folder_name,
                             lambda: load_tdw_playroom(root, folder_name, split, file_pattern))
 

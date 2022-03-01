@@ -30,7 +30,7 @@ DATASETS:
   TEST: ("playroom_large_v3_images/eval", "playroom_large_v3_images/val", )
 SOLVER:
   BASE_LR: 0.0005
-  MAX_ITER: 100000
+  MAX_ITER: 200000
   IMS_PER_BATCH: 64
   CHECKPOINT_PERIOD: 10000
 TEST:

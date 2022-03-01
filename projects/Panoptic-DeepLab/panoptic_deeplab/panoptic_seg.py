@@ -367,8 +367,7 @@ class PanopticDeepLab(nn.Module):
                 thing_ids = []
             elif self.predict_thing_mask:
                 sem_seg = sem_seg_postprocess(sem_seg_results, image_size, height, width)
-                thing_seg = sem_seg.sigmoid() > 0.1
-
+                thing_seg = sem_seg.sigmoid() > 0.05
 
                 # _, thing_logits = self.thingness_model(images.tensor, images.tensor, test_mode=True)
                 # thing_mask = thing_logits.sigmoid() > 0.05

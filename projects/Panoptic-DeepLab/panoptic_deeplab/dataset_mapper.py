@@ -262,7 +262,7 @@ class PanopticDeeplabDatasetMapper:
                     invalid_count = 0
                 invalid_count += 1
                 # sample indices, ignore the first `trial_start` frames of the video
-                if num_frames - sequence_length * delta_time - 1 <= trial_start:  # invalid video input
+                if num_frames - sequence_length * delta_time - 1 <= trial_start and not 'val' in split_trial and 'playroom' not in split_trial and not 'cylinder' in split_trial and not 'occlude':  # invalid video input
                     start_idx = 0
                 else:
                     if self.training:
@@ -343,8 +343,7 @@ class PanopticDeeplabDatasetMapper:
                 #     visualize_views(dataset_dict, plot_keys=['image', 'objects', 'gt_moving', 'delta_image', 'frames', 'flow'])
 
             dataset_dict["file_name"] = os.path.join(root, 'playroom_large_v3_images', split_trial + '.hdf5')
-            if 'model_split' in dataset_dict['file_name'] or 'material_split' in dataset_dict['file_name'] and \
-                    'val' not in dataset_dict['file_name']:
+            if 'model_split' in dataset_dict['file_name'] or 'safari' in dataset_dict['file_name']:
 
                 if 'material_split' in dataset_dict['file_name']:
                     key = dataset_dict['file_name'].split(dataset_dict['root'] + '/playroom_large_v1/')[-1]
@@ -361,6 +360,7 @@ class PanopticDeeplabDatasetMapper:
 
                 if len(per_segment_id) == 6:
                     per_segment_id_tensor = torch.as_tensor(np.ascontiguousarray(per_segment_id)).long()
+                    dataset_dict['gt_moving'] = torch.zeros_like(dataset_dict['segment_id_map'])[None]
                 elif len(per_segment_id) == 7:  # the last item is the moving id
                     per_segment_id_tensor = torch.as_tensor(np.ascontiguousarray(per_segment_id[0:6])).long()
                     moving_id_tensor = torch.as_tensor(np.ascontiguousarray(per_segment_id[-1])).long()
@@ -393,6 +393,10 @@ class PanopticDeeplabDatasetMapper:
                 # visualize_views(dataset_dict,
                 #                 plot_keys=['image', 'object_segments', 'center', 'center_weights', 'offset',
                 #                            'offset_weights'])
+
+            else:
+                dataset_dict['object_segments'] = torch.zeros_like(dataset_dict['segment_id_map'])
+                dataset_dict['gt_moving'] = torch.zeros_like(dataset_dict['segment_id_map'])[None]
 
             '''
             if self.view_generator is not None and self.training:

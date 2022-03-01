@@ -306,11 +306,17 @@ def measure_static_segmentation_metric(out, inputs, size, segment_key,
 
     if moving_only:
         # only evaluate the metric for the moving segments
-        moving_idx = inputs[0]['moving_id'][0, 0]
-        exclude_values = inputs[0]['per_segment_id'][0].cpu().numpy().tolist()
-        exclude_values.remove(moving_idx)
+        if 'moving_id' not in inputs[0].keys():
+            exclude_values = []
+        else:
+            moving_idx = inputs[0]['moving_id'][0, 0]
+            exclude_values = inputs[0]['per_segment_id'][0].cpu().numpy().tolist()
+            exclude_values.remove(moving_idx)
     elif exclude_zone:
-        exclude_values = [inputs[0]['per_segment_id'][:, -2]]  # excluding zone in eval
+        if 'per_segment_id' not in inputs[0].keys():
+            exclude_values = []
+        else:
+            exclude_values = [inputs[0]['per_segment_id'][:, -2]]  # excluding zone in eval
 
     else:
         exclude_values = []

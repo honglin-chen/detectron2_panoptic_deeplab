@@ -27,7 +27,7 @@ def load_tdw_playroom(root, folder_name, split, file_pattern):
         if folder_name in ['playroom_large_v1', 'playroom_large_v1_main']:
             file_list = glob.glob(os.path.join(root, folder_name, 'model_split_%s' % str(i), file_pattern))
         elif folder_name in ['playroom_large_v1_main_images', 'playroom_large_v3_images']:
-            if 'playroom' in i or 'cylinder' in i or 'occlude' in i:
+            if 'playroom' in str(i) or 'cylinder' in str(i) or 'occlude' in str(i):
                 file_list = glob.glob(os.path.join(root, folder_name, 'images', str(i), file_pattern))
             else:
                 file_list = glob.glob(os.path.join(root, folder_name, 'images', 'model_split_%s' % str(i), file_pattern))

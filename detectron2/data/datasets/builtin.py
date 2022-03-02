@@ -30,6 +30,7 @@ from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
 from .dsr import register_dsr
 from .tdw_playroom import register_tdw_playroom_instances
+from .robonetv2 import register_robonetv2
 # ==== Predefined datasets and splits for COCO ==========
 
 _PREDEFINED_SPLITS_COCO = {}
@@ -211,6 +212,24 @@ def register_all_cityscapes(root):
             **meta,
         )
 
+# # ==== Predefined splits for RoboNet V2 ===========
+
+ROBONETv2_DIR = "/data2/honglinc/robonetv2"
+
+_RAW_ROBONETv2_SPLITS = {
+    "robonetv2/train": (['*']),
+    "robonetv2/test": (['*']),
+    "robonetv2/val": (['*']),
+    "robonetv2/trainval": (['*']),
+    "robonetv2/upenn": (['*']),
+    "robonetv2/annotation": (['*']),
+}
+
+def register_all_robonetv2(root):
+    for dataset_name, (file_pattern) in _RAW_ROBONETv2_SPLITS.items():
+        register_robonetv2(root=root, dataset_name=dataset_name, file_pattern=file_pattern)
+
+
 # ==== Predefined splits for DSR ===========
 DSR_DIR = "/data2/honglinc/dsr_dataset/real_test_dataset"
 _RAW_DSR_SPLITS = {
@@ -295,3 +314,4 @@ if __name__.endswith(".builtin"):
     register_all_ade20k(_root)
     register_all_dsr(_root)
     register_all_playroom_large_v1(_root)
+    register_all_robonetv2(_root)

@@ -27,7 +27,8 @@ from detectron2.projects.panoptic_deeplab import (
     PanopticDeeplabDatasetMapper,
     DSRDatasetMapper,
     add_panoptic_deeplab_config,
-    KPCompetitionEvaluator
+    KPCompetitionEvaluator,
+    RoboNetV2DatasetMapper
 )
 from detectron2.solver import get_default_optimizer_params
 from detectron2.solver.build import maybe_add_gradient_clipping
@@ -100,6 +101,8 @@ class Trainer(DefaultTrainer):
     def build_train_loader(cls, cfg):
         if 'dsr' in cfg.DATASETS.TRAIN[0]:
             mapper = DSRDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
+        elif 'robonetv2' in cfg.DATASETS.TRAIN[0]:
+            mapper = RoboNetV2DatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
         else:
             mapper = PanopticDeeplabDatasetMapper(cfg, augmentations=build_sem_seg_train_aug(cfg), training=True)
         return build_detection_train_loader(cfg, mapper=mapper)

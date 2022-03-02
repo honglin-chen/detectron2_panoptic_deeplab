@@ -1,0 +1,50 @@
+_BASE_: ../Cityscapes-PanopticSegmentation/Base-PanopticDeepLab-OS16.yaml
+MODEL:
+  WEIGHTS: ""
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.120, 57.375]
+  BACKBONE:
+    NAME: "build_resnet_deeplab_backbone"
+  RESNETS:
+    DEPTH: 50
+    NORM: "SyncBN"
+    RES5_MULTI_GRID: [1, 2, 4]
+    STEM_TYPE: "deeplab"
+    STEM_OUT_CHANNELS: 128
+    STRIDE_IN_1X1: False
+  SEM_SEG_HEAD:
+    NUM_CLASSES: 133
+    LOSS_TOP_K: 1.0
+    USE_DEPTHWISE_SEPARABLE_CONV: True
+    NUM_CLASSES: 1
+  PANOPTIC_DEEPLAB:
+    STUFF_AREA: 4096
+    NMS_KERNEL: 41
+    SIZE_DIVISIBILITY: 0
+    USE_DEPTHWISE_SEPARABLE_CONV: True
+    RAFT_SUPERVISION: True
+    RAFT_THRESHOLD: 1.0
+    PREDICT_THING_MASK: True
+DATASETS:
+  TRAIN: ("robonetv2/train",)
+  TEST: ("robonetv2/val", "robonetv2/test", )
+SOLVER:
+  BASE_LR: 0.0005
+  MAX_ITER: 200000
+  IMS_PER_BATCH: 64
+  CHECKPOINT_PERIOD: 10000
+TEST:
+  EVAL_PERIOD: 2000
+INPUT:
+  FORMAT: "RGB"
+  GAUSSIAN_SIGMA: 8
+  MIN_SIZE_TRAIN: !!python/object/apply:eval ["[int(x * 0.1 * 640) for x in range(5, 16)]"]
+  MIN_SIZE_TRAIN_SAMPLING: "choice"
+  MIN_SIZE_TEST: 640
+  MAX_SIZE_TRAIN: 960
+  MAX_SIZE_TEST: 640
+  CROP:
+    ENABLED: False
+    TYPE: "absolute"
+    SIZE: (480, 640)
+  FRAME_IDX: [5]

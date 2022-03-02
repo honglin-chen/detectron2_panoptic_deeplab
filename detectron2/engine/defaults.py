@@ -39,6 +39,7 @@ from detectron2.evaluation import (
 from detectron2.projects.panoptic_deeplab import (
     PanopticDeeplabDatasetMapper,
     DSRDatasetMapper,
+    RoboNetV2DatasetMapper
 )
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
@@ -610,6 +611,9 @@ Alternatively, you can call evaluation functions yourself (see Colab balloon tut
         for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
             if 'dsr' in dataset_name:
                 mapper = DSRDatasetMapper(cfg, training=False)
+                data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+            elif 'robonet' in dataset_name:
+                mapper = RoboNetV2DatasetMapper(cfg, training=False)
                 data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
             elif 'playroom' in dataset_name:
                 mapper = PanopticDeeplabDatasetMapper(cfg, training=False)

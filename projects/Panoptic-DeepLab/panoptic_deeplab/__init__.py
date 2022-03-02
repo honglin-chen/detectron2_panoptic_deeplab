@@ -2,6 +2,7 @@
 from .config import add_panoptic_deeplab_config
 from .dataset_mapper import PanopticDeeplabDatasetMapper
 from .dsr_dataset_mapper import DSRDatasetMapper
+from .robonetv2_dataset_mapper import RoboNetV2DatasetMapper
 from .panoptic_seg import (
     PanopticDeepLab,
     INS_EMBED_BRANCHES_REGISTRY,

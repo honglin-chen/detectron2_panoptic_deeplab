@@ -79,9 +79,6 @@ class PanopticDeepLab(nn.Module):
             assert self.raft_threshold is not None
             print('Loading raft model from ./RAFT/models/raft-sintel.pth with threshold', self.raft_threshold)
             self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
-            # self.raft_model = load_model('./RAFT/models/raft-sintel.pth', small=False, train=False, cuda=True, freeze_bn=True, gpus=[0])
-            # load_path = 'thingness-tdw-selfsup-bs2-small-20frames.pth'
-            # self.thingness_model = load_model(load_path, small=True, train=True, cuda=True, freeze_bn=False, gpus=[0])
 
         if self.predict_thing_mask:
             assert cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES == 1
@@ -133,7 +130,7 @@ class PanopticDeepLab(nn.Module):
         losses = {}
 
         # assertion checks
-        if 'playroom' in self.dataset_name or 'dsr' in self.dataset_name:
+        if 'playroom' in self.dataset_name or 'dsr' in self.dataset_name or 'robonet' in self.dataset_name:
             # assert self.raft_supervision
             assert self.predict_thing_mask, "Training with PDL should have predict_thing_mask=True"
             assert "sem_seg" not in batched_inputs[0]
@@ -339,6 +336,28 @@ class PanopticDeepLab(nn.Module):
                 'metric_allobj_miou': allobj_metric['metric_segments_mean_ious'],
             }
         else:
+            image = batched_inputs[0]['image']
+            fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+            ax[0].imshow(image.permute(1, 2, 0).cpu())
+            ax[0].set_title('Image')
+            ax[1].imshow(instance_seg[0].cpu())
+            ax[0].set_title('Segments')
+
+            for a in ax:
+                a.set_axis_off()
+            fig.tight_layout()
+            # plt.show()
+
+            file_name = batched_inputs[0]['file_name'].split('/data3/honglinc/robonetv2/toykitchen_fixed_cam/berkeley/')[-1]
+            file_name = file_name.replace('/', '_').split('.')[0]
+            save_path = os.path.join(self.vis_saved_path,
+                                     'step_%s_%s.png' % ('eval' if iter is None else str(iter), file_name))
+            print('Save visualization to ', save_path)
+            plt.savefig(save_path)
+
+            plt.close()
+
+
             return {}
 
 

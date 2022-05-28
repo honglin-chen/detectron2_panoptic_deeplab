@@ -18,16 +18,40 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 class EvalRAFT:
-    def __init__(self, ckpt_path='./RAFT/models/raft-things.pth'):
+    def __init__(self, ckpt_path, flow_magnitude, motion_area_thresh):
         model = torch.nn.DataParallel(RAFT(args))
         model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
         model = model.module
         model.eval()
         self.model = model.cuda()
+        self.flow_threshold = flow_magnitude
+        self.motion_area_thresh = motion_area_thresh
 
     def __call__(self, image0, image1):
         flow_low, flow_up = self.model(image0, image1, iters=20, test_mode=True)
-        return flow_up
+        motion_segments = convert_flow_to_segments(flow_up, self.flow_threshold, self.motion_area_thresh)
+        return flow_up, motion_segments
+
+
+def convert_flow_to_segments(flows, flow_magnitude, motion_area_thresh=None):
+
+    flow_mag = (flows ** 2).sum(1) ** 0.5
+    flow_mag_threshold = flow_mag > flow_magnitude
+    motion_segments = flow_mag_threshold.unsqueeze(1)
+    motion_segments = motion_segments.float()
+
+    if motion_area_thresh is not None:
+        B, _, H, W = flows.shape
+        area_ratio = motion_segments.flatten(2, 3).sum(-1, keepdims=True) / (H * W)
+        assert isinstance(motion_area_thresh, list) and len(motion_area_thresh) == 2
+        min_thresh, max_thresh = motion_area_thresh
+        mask = (area_ratio > min_thresh) & (area_ratio < max_thresh)
+
+        if mask.sum() < B:
+            motion_segments = mask.float().unsqueeze(-1) * motion_segments
+            print('Filter out by motion area', list(area_ratio))
+
+        return motion_segments
 
 
 def viz_flow(img, flo):

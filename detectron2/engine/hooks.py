@@ -545,7 +545,8 @@ class EvalHook(HookBase):
         comm.synchronize()
 
     def before_train(self):
-        self._do_eval()
+        # self._do_eval()
+        pass
     def after_step(self):
         next_iter = self.trainer.iter + 1
         if self._period > 0 and next_iter % self._period == 0:

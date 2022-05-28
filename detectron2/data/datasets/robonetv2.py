@@ -54,9 +54,11 @@ def load_robonet(root, folder_name, file_pattern, dataset_name):
     if dataset_name == 'robonetv2/train':
         file_list = [file_list[i] for i in train_id]
     elif dataset_name == 'robonetv2/val':
-        file_list = [file_list[i] for i in val_id][0:24]
+        # file_list = [file_list[i] for i in val_id][0:24]
+        file_list = sorted(glob.glob('./bridge_annotations/val/*all_objects.png'))
     elif dataset_name == 'robonetv2/test':
-        file_list = [file_list[i] for i in test_id][0:24]
+        # file_list = [file_list[i] for i in test_id][0:24]
+        file_list = sorted(glob.glob('./bridge_annotations/test/*all_objects.png'))
     elif dataset_name == 'robonetv2/annotation':
         file_list = glob.glob('./bridge_gt/*')
 

@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 # from .thingness_evaluate import load_model
 from .raft_evaluate import EvalRAFT, viz_flow_seg
-from .utils import visualize_center_offset, compute_center_offset, measure_static_segmentation_metric, BCELoss
+from .utils import *
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
@@ -78,7 +78,11 @@ class PanopticDeepLab(nn.Module):
         if self.raft_supervision:
             assert self.raft_threshold is not None
             print('Loading raft model from ./RAFT/models/raft-sintel.pth with threshold', self.raft_threshold)
-            self.raft_model = EvalRAFT(ckpt_path='./RAFT/models/raft-sintel.pth')
+            self.raft_model = EvalRAFT(
+                ckpt_path='./RAFT/models/raft-sintel.pth',
+                flow_magnitude=1.0,
+                motion_area_thresh=[0.01, 0.5]
+            )
 
         if self.predict_thing_mask:
             assert cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES == 1
@@ -88,6 +92,14 @@ class PanopticDeepLab(nn.Module):
         self.dataset_name = cfg.DATASETS.TEST[0]
         if not os.path.exists(self.vis_saved_path):
             os.makedirs(self.vis_saved_path)
+
+        self.student_teacher = cfg.MODEL.PANOPTIC_DEEPLAB.STUDENT_TEACHER
+        self.round_2 = cfg.MODEL.PANOPTIC_DEEPLAB.ROUND_2
+        if self.student_teacher:
+            self.teacher_backbone = build_backbone(cfg)
+            self.teacher_sem_seg_head = build_sem_seg_head(cfg, self.backbone.output_shape())
+            self.teacher_ins_embed_head = build_ins_embed_branch(cfg, self.backbone.output_shape())
+            self.sync_student_teacher = True
 
     @property
     def device(self):
@@ -158,7 +170,35 @@ class PanopticDeepLab(nn.Module):
             offset_targets = None
             offset_weights = None
 
-        # # visualize center and offsets supervision signals for training
+
+        if self.student_teacher:
+            if self.sync_student_teacher:
+                copy_freeze_params(self.backbone, self.teacher_backbone)
+                copy_freeze_params(self.sem_seg_head, self.teacher_sem_seg_head)
+                copy_freeze_params(self.ins_embed_head, self.teacher_ins_embed_head)
+
+                self.sync_student_teacher = False # only sync once
+
+            features = self.teacher_backbone(images.tensor)
+            sem_seg_results, sem_seg_losses = self.teacher_sem_seg_head(features, None, None)
+            center_results, offset_results, center_losses, offset_losses = self.teacher_ins_embed_head(
+                features, None, None, None, None
+            )
+
+            teacher_segments_list = []
+            for i in range(len(batched_inputs)):
+                _, teacher_segments = self.create_instance_segments(sem_seg_results[i:i+1],
+                                                                    center_results[i:i+1],
+                                                                    offset_results[i:i+1],
+                                                                    [batched_inputs[i]],
+                                                                    images, iter, vis=False)
+                teacher_segments_list.append(teacher_segments)
+            teacher_segments = torch.cat(teacher_segments_list, 0)
+
+            out = self.create_teacher_supervision(motion_segments, teacher_segments)
+            center_targets, offset_targets, center_weights, offset_weights = out
+
+        # # # visualize center and offsets supervision signals for training
         # for i in range(len(batched_inputs)):
         #     visualize_center_offset(batched_inputs[i]['image'], center_targets[i], offset_targets[i], center_weights[i], offset_weights[i])
 
@@ -176,15 +216,21 @@ class PanopticDeepLab(nn.Module):
                 weights = None
         elif self.predict_thing_mask:
             assert self.raft_supervision or self.full_supervision, (self.raft_supervision, self.full_supervision)
-            if self.raft_supervision:
+            if self.student_teacher:
+                targets = offset_weights.clone()
+
+            elif self.raft_supervision:
                 targets = motion_segments.float()
             elif self.full_supervision:
                 # object_segments = [x["object_segments"].to(self.device) for x in batched_inputs]
                 # object_segments = ImageList.from_tensors(object_segments, size_divisibility).tensor
                 # targets = (object_segments.unsqueeze(1) > 0).float()
-                targets = offset_weights.clone()
+                if offset_weights is not None:
+                    targets = offset_weights.clone()
+                else:
+                    targets = torch.zeros([1, 1, 512, 512]).cuda()
                 motion_segments = targets
-                assert torch.equal(targets, offset_weights), pdb.set_trace()
+                # assert torch.equal(targets, offset_weights), pdb.set_trace()
 
             weights = None
         else:
@@ -205,7 +251,35 @@ class PanopticDeepLab(nn.Module):
         else:
             out = self.postprocessing(sem_seg_results, center_results, offset_results, batched_inputs, images, motion_segments, iter)
             losses.update(out)
+            losses['metric_iou'] = out['iou']
+
+            pred, gt, iou = out['vis_allobj']
+
+            save_out = {
+                'image': batched_inputs[0]['frames'][0].cpu(),
+                'pred_segments': pred[0],
+                'gt_segments': gt[0],
+            }
+
+            if 'playroom' in batched_inputs[0]['file_name']:
+                save_path = batched_inputs[0]['file_name'].split('/data3/honglinc/playroom_large_v3_images/')[-1]
+                save_path = save_path.replace('/', '-').replace('.hdf5', '.pt')
+                save_folder = os.path.join('save_eccv_results', 'TDW_PanopticDeeplab_Full')
+            else:
+
+                save_path = batched_inputs[0]['file_name'].split('./bridge_annotations/')[-1]
+                save_path = save_path.replace('/', '-').replace('.png', '.pt')
+                save_folder = os.path.join('save_eccv_results', 'Bridge_PanopticDeeplab_COCO_pretrained')
+
+            if not os.path.exists(save_folder):
+                os.mkdir(save_folder)
+
+            print('Save file to ', os.path.join(save_folder, save_path), len(pred[0]))
+            torch.save(save_out, os.path.join(save_folder, save_path))
+
             return losses
+
+
 
         if self.benchmark_network_speed:
             return []
@@ -293,10 +367,7 @@ class PanopticDeepLab(nn.Module):
         x1 = ImageList.from_tensors(x1, size_divisibility).tensor
         x2 = ImageList.from_tensors(x2, size_divisibility).tensor
 
-        raft_flow = self.raft_model(x1, x2)
-        flow_mag = (raft_flow ** 2).sum(1) ** 0.5
-        motion_segments = flow_mag > self.raft_threshold
-        motion_segments = motion_segments.unsqueeze(1)
+        raft_flow, motion_segments = self.raft_model(x1, x2)
 
         # # Visualize flow outputs
         # for i in range(raft_flow.shape[0]):
@@ -306,6 +377,82 @@ class PanopticDeepLab(nn.Module):
         center_targets, offset_targets = compute_center_offset(motion_segments)
 
         return center_targets, offset_targets, center_weights, offset_weights, motion_segments
+
+    def create_teacher_supervision(self, motion_segments, teacher_segments):
+
+        # apply motion seg to the motion segments
+        motion_segments = motion_segments.long()
+        out_segment_list = []
+        out_segment_save_list = []
+
+        for i in range(motion_segments.shape[0]):
+            if motion_segments[i, 0].sum() > 0:
+                motion_seg = apply_cc(motion_segments[i, 0])
+                motion_segments[i, 0] = motion_seg
+            else:
+                motion_seg = motion_segments[i, 0]
+
+            out_segment, score = score_prediction(motion_seg[None, None], teacher_segments[i:i+1].long())
+            out_segment = filter_small_connected_component(out_segment[0], min_area=20).unsqueeze(0)
+
+            if self.round_2:
+                mask = (motion_seg > 0).unsqueeze(0).float()
+                out_segment_save_list.append(out_segment.clone())
+                out_segment = mask * out_segment + (1 - mask) * teacher_segments[i:i+1]
+
+            out_segment_list.append(out_segment)
+
+        out_segment = torch.cat(out_segment_list, 0)
+
+        # for i in range(out_segment.shape[0]):
+        #     plt.subplot(1, 4, 1)
+        #     plt.imshow(motion_segments[i,0].cpu())
+        #     plt.title('%d' % len(motion_segments[i, 0].unique()))
+        #     plt.subplot(1, 4, 2)
+        #     plt.imshow(teacher_segments[i].cpu())
+        #     plt.title('%d' % len(teacher_segments[i].unique()))
+        #     plt.subplot(1, 4, 3)
+        #     plt.imshow(out_segment_save_list[i][0].cpu())
+        #     plt.title('%d' % len(out_segment[i].unique()))
+        #     plt.subplot(1, 4, 4)
+        #     plt.imshow(out_segment[i].cpu())
+        #     plt.title('%d' % len(out_segment[i].unique()))
+        #     plt.show()
+        #     plt.close()
+
+        #     fig, ax = plt.subplots(1, len(out_segment[i].unique()))
+        #     unique = out_segment[i].unique()
+        #     for j in range(len(out_segment[i].unique())):
+        #         uid = unique[j]
+        #         ax[j].imshow((uid == out_segment[i]).cpu())
+        #         ax[j].set_title('%d' % (uid == out_segment[i]).sum())
+        #     plt.show()
+        #     plt.close()
+        # pdb.set_trace()
+
+        B, H, W = out_segment.shape
+        center_weights = offset_weights = (out_segment > 0).unsqueeze(1).float()
+
+        center_targets_list = []
+        offset_targets_list = []
+        for i in range(B):
+            segment_id = out_segment[i].unique()
+            segment_id = segment_id[segment_id > 0].view(-1, 1, 1, 1)
+            if segment_id.shape[0] == 0:
+                center_targets = torch.zeros(1, 1, H, W).to(out_segment.device)
+                offset_targets = torch.zeros(1, 2, H, W).to(out_segment.device)
+            else:
+                segment_masks = segment_id == out_segment[i].unsqueeze(0)
+                center_targets, offset_targets = compute_center_offset(segment_masks)
+                center_targets = center_targets.sum(0, keepdims=True)
+                offset_targets = offset_targets.sum(0, keepdims=True)
+            center_targets_list.append(center_targets)
+            offset_targets_list.append(offset_targets)
+
+        center_targets = torch.cat(center_targets_list, 0)
+        offset_targets = torch.cat(offset_targets_list, 0)
+        return center_targets, offset_targets, center_weights, offset_weights
+
 
     def postprocessing(self, sem_seg_results, center_results, offset_results, batched_inputs, images, motion_segments, iter):
         # visualize results and compute metric
@@ -334,6 +481,7 @@ class PanopticDeepLab(nn.Module):
                 'metric_sup_miou': sup_metric['metric_segments_mean_ious'],
                 'metric_sinobj_miou': sinobj_metric['metric_segments_mean_ious'],
                 'metric_allobj_miou': allobj_metric['metric_segments_mean_ious'],
+                'vis_allobj': allobj_vis['segments']
             }
         else:
             image = batched_inputs[0]['image']
@@ -357,8 +505,35 @@ class PanopticDeepLab(nn.Module):
 
             plt.close()
 
+            out = measure_static_segmentation_metric({'pred':instance_seg},
+                                                     batched_inputs,
+                                                     size=instance_seg.shape[-2:],
+                                                     segment_key=['pred'],
+                                                     moving_only=False,
+                                                     exclude_zone=False,
+                                                     eval_full_res=True)
 
-            return {}
+            pred, gt, iou = out[1]['pred']
+            num_plots = len(pred[0])
+
+            fig, ax = plt.subplots(2, num_plots, figsize=(3 * num_plots, 5))
+
+            for k, (p, g, i) in enumerate(zip(pred[0], gt[0], iou[0])):
+                ax0 = ax[0] if num_plots == 1 else ax[0, k]
+                ax1 = ax[1] if num_plots == 1 else ax[1, k]
+                ax0.imshow(p)
+                ax0.set_title('IoU: %.2f' % i, fontsize=15)
+                ax0.axis('off')
+                ax1.imshow(g)
+                ax1.set_title('GT', fontsize=15)
+                ax1.axis('off')
+
+            fig.tight_layout()
+            # plt.show()
+
+            print('Mean mIoU / No. objects ', out[0]['metric_pred_mean_ious'], len(pred[0]))
+
+            return {'vis_allobj': [pred, gt, iou], 'iou': out[0]['metric_pred_mean_ious']}
 
 
     def measure_segments(self, segments, batched_inputs, moving_only):
@@ -494,7 +669,7 @@ class PanopticDeepLab(nn.Module):
         # print('Save fig to ', save_path)
         plt.savefig(save_path, bbox_inches='tight')
 
-        # plt.show()
+        plt.show()
         plt.close()
 
 @SEM_SEG_HEADS_REGISTRY.register()
@@ -626,9 +801,12 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
-        loss = self.loss(predictions, targets, weights)
-        losses = {"loss_sem_seg": loss * self.loss_weight}
-        return losses
+        if targets is None:
+            return {}
+        else:
+            loss = self.loss(predictions, targets, weights)
+            losses = {"loss_sem_seg": loss * self.loss_weight}
+            return losses
 
 
 def build_ins_embed_branch(cfg, input_shape):
@@ -793,9 +971,20 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         """
         center, offset = self.layers(features)
         if self.training:
+
+            _center = F.interpolate(
+                center, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+            )
+            _offset = (
+                    F.interpolate(
+                        offset, scale_factor=self.common_stride, mode="bilinear", align_corners=False
+                    )
+                    * self.common_stride
+            )
+
             return (
-                None,
-                None,
+                _center,
+                _offset,
                 self.center_losses(center, center_targets, center_weights),
                 self.offset_losses(offset, offset_targets, offset_weights),
             )
@@ -823,9 +1012,12 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         return center, offset
 
     def center_losses(self, predictions, targets, weights):
+        if targets is None:
+            return {}
         predictions = F.interpolate(
             predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
         )
+
         loss = self.center_loss(predictions, targets) * weights
         if weights.sum() > 0:
             loss = loss.sum() / weights.sum()
@@ -835,6 +1027,8 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         return losses
 
     def offset_losses(self, predictions, targets, weights):
+        if targets is None:
+            return {}
         predictions = (
             F.interpolate(
                 predictions, scale_factor=self.common_stride, mode="bilinear", align_corners=False
@@ -848,3 +1042,4 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
             loss = loss.sum() * 0
         losses = {"loss_offset": loss * self.offset_loss_weight}
         return losses
+

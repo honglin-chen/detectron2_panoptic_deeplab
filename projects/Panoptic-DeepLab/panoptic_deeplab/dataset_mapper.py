@@ -262,7 +262,7 @@ class PanopticDeeplabDatasetMapper:
                     invalid_count = 0
                 invalid_count += 1
                 # sample indices, ignore the first `trial_start` frames of the video
-                if num_frames - sequence_length * delta_time - 1 <= trial_start: #and not 'val' in split_trial and 'playroom' not in split_trial and not 'cylinder' in split_trial and not 'occlude':  # invalid video input
+                if num_frames - sequence_length * delta_time - 1 <= trial_start and not 'val' in split_trial and 'playroom' not in split_trial and not 'cylinder' in split_trial and not 'occlude':  # invalid video input
                     print('Invalid video: ', dataset_dict["file_name"])
                     start_idx = 0
                 else:

@@ -251,6 +251,11 @@ class SimpleTrainer(TrainerBase):
         model.train()
 
         self.model = model
+
+        pytorch_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Building model with:")
+        print(f"\t{pytorch_trainable_params} trainable parameters")
+
         self.data_loader = data_loader
         self._data_loader_iter = iter(data_loader)
         self.optimizer = optimizer

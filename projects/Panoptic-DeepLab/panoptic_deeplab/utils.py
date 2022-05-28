@@ -3,6 +3,10 @@ from torch import nn
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import torch.nn.functional as F
+from torchvision import transforms
+from kornia.contrib import connected_components
+
 from detectron2.projects.panoptic_deeplab.segmentation_metrics import SegmentationMetrics
 import pdb
 def visualize_center_offset(image, center_targets, offset_targets, center_weights, offset_weights):
@@ -367,6 +371,169 @@ def measure_static_segmentation_metric(out, inputs, size, segment_key,
     return segment_metric, segment_out
 
 
+def copy_freeze_params(model_a, model_b):
+    # copy the params in model_b from model_a
+    # freeze the params in model_b
+
+    model_b.load_state_dict(model_a.state_dict())
+    for param_b in model_b.parameters():
+        param_b.requires_grad = False     # not update by gradient
+
+
+def score_prediction(pred_motion, pred_segments, K=256):
+
+    B = pred_segments.shape[0]
+    size = pred_segments.shape[-2:]
+    R = transforms.Resize(size)
+
+    ## get the motion segment by thresholding
+    motion_seg = F.interpolate(pred_motion.float(), size, mode='nearest').squeeze(1)
+    # motion_seg = (R(pred_motion).square().sum(-3).sqrt() > self.thresh).float()
+
+    ## get the static segments
+    assert pred_segments.max() < K
+    static_segs = F.one_hot(pred_segments, K).float()
+    # remove the one-hot encoding of the background
+    static_segs = static_segs[..., 1:]
+
+    other_unexplained_motion_segments = []
+    motion_seg_copy = motion_seg.clone()
+    if motion_seg.unique().shape[0] > 2:
+        # find the largest motion segment
+        assert pred_motion.max() < K
+        motion_seg = F.one_hot(motion_seg.long(), K).float()
+        area = motion_seg.sum(dim=(-3, -2))
+        area[:, 0] = 0 # ignore the background region
+        argmax_area = area.argmax(-1).long()
+
+        other_unexplained_motion_segments = list(area[0].nonzero())
+        other_unexplained_motion_segments.remove(argmax_area)
+
+        b_inds = torch.arange(B, dtype=torch.long, device=argmax_area.device)
+        inds = torch.stack([b_inds[:, None], argmax_area[:, None]], 0)
+        motion_seg = motion_seg.permute(0, 3, 1, 2)[list(inds)][:, 0].long()  # [B,H,W]
+
+
+    ## find the segment that overlaps most with the motion segments
+    overlaps = (motion_seg[...,None] * static_segs).sum(dim=(-3,-2))
+    best_overlaps = overlaps.argmax(-1).long() # [B]
+    b_inds = torch.arange(B, dtype=torch.long, device=best_overlaps.device)
+    inds = torch.stack([
+        b_inds[:,None],
+        best_overlaps[:,None]], 0)
+    explained = static_segs.permute(0,3,1,2)[list(inds)][:,0].long() # [B,H,W]
+    ## "explain away" by setting remaining pixels to a new value
+    unexplained = (motion_seg.long() - explained).clamp(min=0)
+    score = unexplained.float().mean()
+
+    out_segments = unexplained + 2 * explained
+
+    if len(other_unexplained_motion_segments) > 0:
+        max_idx = out_segments.max()
+        for idx in other_unexplained_motion_segments:
+            out_segments[motion_seg_copy == idx] = max_idx + 1
+            max_idx += 1
+
+    return out_segments, score
+
+def reorder_int_labels(x):
+    _, y = torch.unique(x, return_inverse=True)
+    y -= y.min()
+    return y
+
+
+def label_connected_component(labels, min_area=20, topk=256):
+    size = labels.size()
+    assert len(size) == 2
+    max_area = size[0] * size[1] - 1
+
+    # per-label binary mask
+    unique_labels = torch.unique(labels).reshape(-1, 1, 1)  # [?, 1, 1], where ? is the number of unique id
+    unique_labels = unique_labels[unique_labels > 0]  # remove the zero id, which is the background
+    binary_masks = (labels.unsqueeze(0) == unique_labels).float()  # [?, H, W]
+
+
+    # label connected components
+    # cc is an integer tensor, each unique id represents a single connected component
+    cc = connected_components(binary_masks.unsqueeze(1), num_iterations=500)  # [?, 1, H, W]
+
+    # reorder indices in cc so that cc_area tensor below is a smaller
+    cc = reorder_int_labels(cc)
+
+    # area of each connected components
+    cc_area = torch.bincount(cc.long().flatten().cpu()).cuda()  # bincount on GPU is much slower
+    num_cc = cc_area.shape[0]
+    valid = (cc_area >= min_area) & (cc_area <= max_area)  # [num_cc]
+
+    if num_cc < topk:
+        selected_cc = torch.arange(num_cc).cuda()
+    else:
+        _, selected_cc = torch.topk(cc_area, k=topk)
+        valid = valid[selected_cc]
+
+    # collapse the 0th dimension, since there is only matched one connected component (across 0th dimension)
+    cc_mask = (cc == selected_cc.reshape(1, -1, 1, 1)).sum(0)  # [num_cc, H, W]
+    cc_mask = cc_mask * valid.reshape(-1, 1, 1)
+    out = cc_mask.argmax(0)
+    return out
+
+def apply_cc(mask):
+    assert len(mask.shape) == 2
+    mask = label_connected_component(mask, min_area=10)  # [H, W]
+    mask = reorder_int_labels(mask)  # [H, W]
+    return mask
+
+def filter_small_connected_component(labels, min_area=10, invalid_value=0):
+    size = labels.size()
+    assert len(size) == 2
+    # max_area = size[0] * size[1] - 1
+
+    # per-label binary mask
+    unique_labels = torch.unique(labels).reshape(-1, 1, 1)  # [?, 1, 1], where ? is the number of unique id
+    binary_masks = (labels.unsqueeze(0) == unique_labels).float()  # [?, H, W]
+
+    # filter the binary mask first
+    # if the binary mask has area smaller than min_area, then its CC must be smaller than min_area
+    area = binary_masks.flatten(1, 2).sum(-1)
+    valid_area_mask = area > min_area
+
+    if valid_area_mask.sum() < valid_area_mask.shape[0]:  # filter
+        invalid_label_mask = binary_masks[~valid_area_mask].sum(0) > 0
+        labels = invalid_label_mask * invalid_value + ~invalid_label_mask * labels
+        binary_masks = binary_masks[valid_area_mask]
+
+
+    # label connected components
+    # cc is an integer tensor, each unique id represents a single connected component
+    cc = connected_components(binary_masks.unsqueeze(1), num_iterations=200)  # [?, 1, H, W]
+
+    # reorder indices in cc so that cc_area tensor below is a smaller
+    cc = reorder_int_labels(cc)
+
+    # area of each connected components
+    cc_area = torch.bincount(cc.long().flatten().cpu()).cuda()  # bincount on GPU is much slower
+    num_cc = cc_area.shape[0]
+    cc_idx = torch.arange(num_cc).cuda()
+    assert torch.equal(cc.sum(0), cc.max(0)[0])  # make sure the CCs are mutually exclusive
+    cc = cc.sum(0)  # collapse the 0th dimension (note: the CCs must be mutually exclusive)
+
+    # find ccs that are greater than min area and set the invalid ones to zeros
+    # there are two ways to implement it -- choose the one that is more memory efficient
+    num_valid_segments = (cc_area >= min_area).sum()
+    num_invalid_segments = (cc_area < min_area).sum()
+
+    if num_valid_segments < num_invalid_segments:
+        valid = cc_area >= min_area
+        valid_cc_idx = cc_idx[valid].view(-1, 1, 1)
+        valid_mask = (cc == valid_cc_idx).sum(0) > 0
+        valid_labels = valid_mask * labels + ~valid_mask * invalid_value
+    else:
+        invalid = cc_area < min_area
+        invalid_cc_idx = cc_idx[invalid].view(-1, 1, 1)
+        invalid_mask = (cc == invalid_cc_idx).sum(0) > 0
+        valid_labels = ~invalid_mask * labels + invalid_mask * invalid_value
+
+    return valid_labels
 
 class BCELoss(nn.Module):
     def __init__(self):
